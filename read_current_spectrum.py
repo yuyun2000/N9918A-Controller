@@ -7,7 +7,7 @@ def read_current_spectrum():
     try:
         # 连接到设备
         rm = pyvisa.ResourceManager('@py')
-        device = rm.open_resource('TCPIP::192.168.20.39::INSTR')
+        device = rm.open_resource('TCPIP::192.168.20.175::INSTR')
         device.timeout = 10000
         
         print("连接成功!")

@@ -3,3 +3,5 @@ pyvisa-py
 matplotlib
 zeroconf
 psutil
+pandas
+scipy
