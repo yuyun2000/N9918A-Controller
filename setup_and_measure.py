@@ -119,7 +119,7 @@ class N9918AController:
     
     def read_trace_data(self):
         """
-        Read trace data from the device
+        Read trace data from the device (直接读取dBμV数据)
         """
         if not self.connected:
             print("ERROR: Device not connected")
@@ -134,13 +134,10 @@ class N9918AController:
             print(f"⏳ 等待扫描完成 ({sweep_time:.1f}秒)...")
             time.sleep(sweep_time)
             
-            # Read trace data
+            # Read trace data (设备直接输出的就是dBμV)
             self.device.write(":TRAC:DATA?")
             trace_data = self.device.read()
-            amplitudes_dbm = [float(x) for x in trace_data.split(",")]
-            
-            # Convert dBm to dBuV (dBm + 107 = dBuV for 50 ohm system)
-            amplitudes_dBuv = [amp + 107 for amp in amplitudes_dbm]
+            amplitudes_dBuv = [float(x) for x in trace_data.split(",")]
             
             # Calculate frequency array
             freq_step = (self.stop_freq - self.start_freq) / (self.n_points - 1)
@@ -302,6 +299,11 @@ def plot_emc_spectrum(frequencies, amplitudes, peak_results=None):
     
     # 设置频率轴范围
     ax.set_xlim([min(freq_mhz), max(freq_mhz)])
+    
+    # 自动调整纵轴范围，使其与设备显示一致
+    y_min = min(min(amplitudes), min(fcc_limits), min(ce_limits)) - 10
+    y_max = max(max(amplitudes), max(fcc_limits), max(ce_limits)) + 10
+    ax.set_ylim([y_min, y_max])
     
     plt.tight_layout()
     plt.show()
