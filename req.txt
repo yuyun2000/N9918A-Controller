@@ -5,3 +5,4 @@ zeroconf
 psutil
 pandas
 scipy
+pythonnet

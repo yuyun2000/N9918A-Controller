@@ -14,6 +14,10 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import threading
 import time
 from n9918a_backend import N9918AController, get_fcc_ce_limits, post_process_peak_search
+from n9918a_backend import save_emi_measurement_data,save_peak_analysis,save_spectrum_data  # 确保导入正确
+import os
+
+from Switch import MiniCircuitsSwitchController
 
 class EMCAnalyzerGUI:
     def __init__(self, root):
@@ -24,6 +28,8 @@ class EMCAnalyzerGUI:
         
         # 创建后端控制器
         self.controller = N9918AController(ip_address='192.168.20.39')
+
+        self.switch_controller = MiniCircuitsSwitchController()
         
         # 当前数据
         self.current_frequencies = None
@@ -33,6 +39,8 @@ class EMCAnalyzerGUI:
         self.sweep_time = 1.0
         self.measurement_in_progress = False
             
+        self.root.after(1000, self.connect_switch)
+        
         # 创建界面
         self.create_widgets()
         
@@ -115,12 +123,123 @@ class EMCAnalyzerGUI:
         self.status_text = tk.Text(status_frame, height=6, width=80)
         self.status_text.pack(fill=tk.BOTH, padx=5, pady=5)
         
+        # 添加切换器控制面板
+        switch_frame = ttk.LabelFrame(main_frame, text="Switch Controller")
+        switch_frame.pack(fill=tk.X, pady=(0, 10))
+
+        # 控制按钮
+        switch_ctrl_frame = ttk.Frame(switch_frame)
+        switch_ctrl_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        self.connect_switch_btn = ttk.Button(switch_ctrl_frame, text="Connect Switch", command=self.connect_switch)
+        self.connect_switch_btn.pack(side=tk.LEFT, padx=5)
+
+        self.disconnect_switch_btn = ttk.Button(switch_ctrl_frame, text="Disconnect Switch", command=self.disconnect_switch, state=tk.DISABLED)
+        self.disconnect_switch_btn.pack(side=tk.LEFT, padx=5)
+
+        # 开关按钮 A/B/C/D
+        switch_btn_frame = ttk.Frame(switch_frame)
+        switch_btn_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        ttk.Label(switch_btn_frame, text="Switch Positions:").pack(anchor='w')
+
+        # 保存开关按钮引用
+        self.switch_buttons = {}
+
+        for switch in ['A', 'B', 'C', 'D']:
+            frame = ttk.Frame(switch_btn_frame)
+            frame.pack(side=tk.LEFT, padx=10)
+
+            label = ttk.Label(frame, text=f"Switch {switch}")
+            label.pack()
+
+            btn1 = ttk.Button(frame, text="Pos 1", width=6, command=lambda s=switch: self.set_switch_position(s, 1))
+            btn1.pack(side=tk.LEFT, padx=2)
+            
+            btn2 = ttk.Button(frame, text="Pos 2", width=6, command=lambda s=switch: self.set_switch_position(s, 2))
+            btn2.pack(side=tk.LEFT, padx=2)
+
+            self.switch_buttons[switch] = (btn1, btn2)
+
+        # 状态显示区域
+        switch_status_frame = ttk.LabelFrame(switch_frame, text="Switch Status")
+        switch_status_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        self.switch_status_text = tk.Text(switch_status_frame, height=6, width=80)
+        self.switch_status_text.pack(fill=tk.BOTH, padx=5, pady=5)
         # 创建可调整的主显示区域
         self.create_main_display(main_frame)
         
         # 添加调整比例的滑块
         self.create_ratio_control(main_frame)
 
+    #---------------------------------切换器相关函数
+    def connect_switch(self):
+        """连接切换器"""
+        try:
+            if self.switch_controller.connect():
+                self.connect_switch_btn.config(state=tk.DISABLED)
+                self.disconnect_switch_btn.config(state=tk.NORMAL)
+                self.update_switch_status()
+                messagebox.showinfo("Success", "Switch connected successfully!")
+            else:
+                messagebox.showerror("Error", "Failed to connect to switch.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error connecting to switch:\n{e}")
+
+    def disconnect_switch(self):
+        """断开切换器"""
+        try:
+            self.switch_controller.disconnect()
+            self.connect_switch_btn.config(state=tk.NORMAL)
+            self.disconnect_switch_btn.config(state=tk.DISABLED)
+            self.switch_status_text.delete(1.0, tk.END)
+            self.switch_status_text.insert(tk.END, "Switch disconnected.\n")
+            messagebox.showinfo("Info", "Switch disconnected.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error disconnecting switch:\n{e}")
+
+    def set_switch_position(self, switch, position):
+        """设置某个开关的位置"""
+        try:
+            self.switch_controller.set_switch(switch, position)
+            self.update_switch_status()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to set switch {switch} to position {position}:\n{e}")
+
+    def update_switch_status(self):
+        """更新切换器状态显示"""
+        try:
+            self.switch_status_text.delete(1.0, tk.END)
+            
+            # 获取开关状态
+            switch_status = self.switch_controller.get_switch_status()
+            model = self.switch_controller.get_model_name()
+            serial = self.switch_controller.get_serial_number()
+            firmware = self.switch_controller.get_firmware()
+            temp = self.switch_controller.get_temperature()
+            usb_status = self.switch_controller.get_usb_status()
+
+            self.switch_status_text.insert(tk.END, f"Model: {model}\n")
+            self.switch_status_text.insert(tk.END, f"Serial: {serial}\n")
+            self.switch_status_text.insert(tk.END, f"Firmware: {firmware}\n")
+            self.switch_status_text.insert(tk.END, f"Temperature: {temp} °C\n")
+            self.switch_status_text.insert(tk.END, f"USB Status: {usb_status}\n\n")
+            self.switch_status_text.insert(tk.END, "Switch Positions:\n")
+            for switch, pos in switch_status.items():
+                self.switch_status_text.insert(tk.END, f"  {switch}: Position {pos}\n")
+
+            # 更新按钮状态
+            for switch, pos in switch_status.items():
+                btn1, btn2 = self.switch_buttons[switch]
+                btn1.config(state=tk.NORMAL if pos != 1 else tk.DISABLED)
+                btn2.config(state=tk.NORMAL if pos != 2 else tk.DISABLED)
+
+        except Exception as e:
+            self.switch_status_text.delete(1.0, tk.END)
+            self.switch_status_text.insert(tk.END, f"Error reading switch status:\n{e}\n")
+
+    #------------------------------------频谱仪相关
 
     def start_emi_measurement(self, duration):
         """开始快速EMC测量（只采集一次，PC端计算多种模式）"""
@@ -528,15 +647,6 @@ class EMCAnalyzerGUI:
         self.fast_measure_btn.config(state=state)
         self.stop_measure_btn.config(state=tk.DISABLED if enabled else tk.NORMAL)
 
-    def stop_measurement(self):
-        """停止测量"""
-        try:
-            if self.controller.connected and self.controller.device:
-                self.controller.device.write("INIT:CONT OFF")
-                self.progress_var.set("Measurement stopped")
-                self.set_measurement_buttons_state(True)
-        except Exception as e:
-            print(f"Error stopping measurement: {e}")
     
     def create_main_display(self, parent):
         """创建主显示区域"""
@@ -779,29 +889,7 @@ class EMCAnalyzerGUI:
         self.config_btn.config(state=tk.NORMAL, text="Configure")
         messagebox.showerror("Error", f"Error configuring device:\n{error_msg}")
     
-    def start_measurement(self):
-        """开始测量"""
-        def measure_task():
-            try:
-                self.measure_btn.config(state=tk.DISABLED, text="Measuring...")
-                self.root.update()
-                
-                # 获取扫描时间
-                self.sweep_time = self.get_sweep_time()
-                print(f"Estimated sweep time: {self.sweep_time:.1f} seconds")
-                
-                frequencies, amplitudes = self.controller.read_trace_data()
-                if frequencies is not None and amplitudes is not None:
-                    # 峰值分析
-                    peaks = post_process_peak_search(frequencies, amplitudes)
-                    self.root.after(0, lambda: self.on_measurement_complete(frequencies, amplitudes, peaks))
-                else:
-                    self.root.after(0, self.on_measurement_failed)
-            except Exception as e:
-                self.root.after(0, lambda: self.on_measurement_error(str(e)))
-        
-        threading.Thread(target=measure_task, daemon=True).start()
-    
+
     def on_measurement_complete(self, frequencies, amplitudes, peaks, multi_results=None):
         """测量完成回调 - 增强版本"""
         self.set_measurement_buttons_state(True)
@@ -995,8 +1083,7 @@ class EMCAnalyzerGUI:
             return
         
         try:
-            from n9918a_backend import save_emi_measurement_data,save_peak_analysis,save_spectrum_data  # 确保导入正确
-            import os
+
             saved_files = []
             
             # 如果有EMI测量数据，保存完整数据
