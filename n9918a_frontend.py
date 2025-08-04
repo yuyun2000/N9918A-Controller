@@ -605,7 +605,12 @@ class EMCAnalyzerGUI:
                 
                 # 分析峰值
                 peaks = post_process_peak_search(frequencies, amplitudes)
-                for peak in peaks[:5]:  # 只显示前5个峰值
+                # 显示所有超标的峰值和前10个重要峰值
+                exceed_peaks = [p for p in peaks if p['exceed_fcc'] or p['exceed_ce']]
+                normal_peaks = [p for p in peaks if not (p['exceed_fcc'] or p['exceed_ce'])]
+                
+                # 首先显示所有超标的峰值
+                for peak in exceed_peaks:
                     status = []
                     if peak['exceed_fcc']:
                         status.append("FCC Fail")
@@ -623,6 +628,28 @@ class EMCAnalyzerGUI:
                     line += f"{', '.join(status):<15}\n"
                     
                     self.peak_text.insert(tk.END, line)
+                
+                # 然后显示重要的正常峰值（最多10个）
+                if normal_peaks:
+                    self.peak_text.insert(tk.END, "\n--- Normal Peaks ---\n")
+                    for peak in normal_peaks[:10]:
+                        status = []
+                        if peak['exceed_fcc']:
+                            status.append("FCC Fail")
+                        if peak['exceed_ce']:
+                            status.append("CE Fail")
+                        if not status:
+                            status = ["Pass"]
+                        
+                        line = f"{peak['frequency_mhz']:<12.3f} "
+                        line += f"{peak['amplitude_dbuv']:<12.2f} "
+                        line += f"{peak['fcc_limit']:<12.1f} "
+                        line += f"{peak['ce_limit']:<12.1f} "
+                        line += f"{peak['fcc_margin']:<12.2f} "
+                        line += f"{peak['ce_margin']:<12.2f} "
+                        line += f"{', '.join(status):<15}\n"
+                        
+                        self.peak_text.insert(tk.END, line)
     def on_emi_measurement_complete(self, results):
         """EMI测量完成回调 - 快速版本"""
         self.emi_results = results

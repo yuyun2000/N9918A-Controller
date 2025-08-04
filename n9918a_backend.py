@@ -847,10 +847,10 @@ def post_process_peak_search(frequencies, amplitudes, peak_distance=30, min_prom
     std_amp = np.std(amplitudes)
     
     # 动态调整显著性阈值
-    dynamic_prominence = max(min_prominence, std_amp * 0.5)
+    dynamic_prominence = max(min_prominence, std_amp * 0.2)  # 进一步降低阈值以检测更多峰值
     
     # 动态调整最小高度阈值
-    min_height = mean_amp + dynamic_prominence * 0.7
+    min_height = mean_amp + dynamic_prominence * 0.3  # 进一步降低阈值以检测更多峰值
     
     # 多级峰值检测
     # 第一级：显著峰值检测
@@ -864,17 +864,28 @@ def post_process_peak_search(frequencies, amplitudes, peak_distance=30, min_prom
     # 第二级：次要峰值检测（更宽松的条件）
     secondary_peaks, _ = signal.find_peaks(
         amplitudes,
-        distance=max(15, peak_distance // 2),  # 更小的间隔
-        prominence=max(1.0, dynamic_prominence * 0.6),
-        height=mean_amp + 1.0
+        distance=max(5, peak_distance // 4),  # 更小的间隔
+        prominence=max(0.3, dynamic_prominence * 0.3),  # 更低的显著性要求
+        height=mean_amp + 0.3  # 更低的高度要求
     )
     
+    # 第三级：检测所有超过限值的点（即使不是峰值）
+    threshold_peaks = []
+    for i in range(len(amplitudes)):
+        freq_hz = frequencies[i]
+        amp_dbuv = amplitudes[i]
+        fcc_limit, ce_limit = get_fcc_ce_limits(freq_hz)
+        
+        # 如果点超过任一限值，则添加为峰值
+        if amp_dbuv > fcc_limit or amp_dbuv > ce_limit:
+            threshold_peaks.append(i)
+    
     # 合并峰值并去重
-    all_peaks = list(set(list(primary_peaks) + list(secondary_peaks)))
+    all_peaks = list(set(list(primary_peaks) + list(secondary_peaks) + threshold_peaks))
     
     # 如果没有检测到峰值，使用原始方法
     if len(all_peaks) == 0:
-        all_peaks = find_peaks_manual(amplitudes, distance=peak_distance//2, prominence=min_prominence*0.7)
+        all_peaks = find_peaks_manual(amplitudes, distance=peak_distance//2, prominence=min_prominence*0.3)
     
     # 计算每个峰值的重要性分数
     peak_scores = []
@@ -901,8 +912,11 @@ def post_process_peak_search(frequencies, amplitudes, peak_distance=30, min_prom
             right_diff = amp_dbuv - amplitudes[idx+1]
             prominence_score = min(left_diff, right_diff)
         
+        # 对于超过限值的点给予更高的评分
+        exceed_bonus = 15 if (fcc_margin > 0 or ce_margin > 0) else 0  # 提高超限点的优先级
+        
         # 综合评分
-        total_score = amplitude_score * 0.4 + margin_score * 0.4 + prominence_score * 0.2
+        total_score = amplitude_score * 0.2 + margin_score * 0.5 + prominence_score * 0.2 + exceed_bonus
         peak_scores.append((idx, total_score, amp_dbuv, fcc_margin, ce_margin, fcc_limit, ce_limit))
     
     # 按重要性排序
@@ -911,13 +925,13 @@ def post_process_peak_search(frequencies, amplitudes, peak_distance=30, min_prom
     # 根据频率范围调整返回的峰值数量
     freq_range_mhz = (frequencies[-1] - frequencies[0]) / 1e6
     if freq_range_mhz < 1:  # 低于1MHz范围
-        max_peaks = 15
+        max_peaks = 25  # 增加峰值数量
     elif freq_range_mhz < 100:  # 1MHz-100MHz范围
-        max_peaks = 20
+        max_peaks = 40  # 增加峰值数量
     else:  # 高于100MHz范围
-        max_peaks = 25
+        max_peaks = 50  # 增加峰值数量
     
-    # 限制峰值数量，但确保包含超标的峰值
+    # 确保包含所有超标的峰值
     peak_results = []
     exceed_peaks = []
     normal_peaks = []
@@ -937,15 +951,16 @@ def post_process_peak_search(frequencies, amplitudes, peak_distance=30, min_prom
             'importance_score': score
         }
         
+        # 确保所有超过限值的点都被包含
         if fcc_margin > 0 or ce_margin > 0:
             exceed_peaks.append(peak_data)
         else:
             normal_peaks.append(peak_data)
     
-    # 首先添加超标的峰值
-    peak_results.extend(exceed_peaks[:max_peaks//2])
+    # 首先添加所有超标的峰值
+    peak_results.extend(exceed_peaks)
     
-    # 然后添加重要的正常峰值
+    # 然后添加重要的正常峰值，直到达到最大数量
     remaining_slots = max_peaks - len(peak_results)
     peak_results.extend(normal_peaks[:remaining_slots])
     
