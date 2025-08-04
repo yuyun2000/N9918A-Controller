@@ -835,32 +835,96 @@ def find_peaks_manual(data, distance=5, prominence=3):
     peaks.sort(key=lambda x: data[x], reverse=True)
     return peaks
 
-def post_process_peak_search(frequencies, amplitudes, peak_distance=50, min_prominence=3):
+def post_process_peak_search(frequencies, amplitudes, peak_distance=30, min_prominence=2):
     """
-    后处理峰值搜索
+    改进的后处理峰值搜索 - 更智能的峰值检测算法
     """
-    peak_indices, properties = signal.find_peaks(
-        amplitudes, 
+    if len(amplitudes) < 3:
+        return []
+    
+    # 计算动态参数
+    mean_amp = np.mean(amplitudes)
+    std_amp = np.std(amplitudes)
+    
+    # 动态调整显著性阈值
+    dynamic_prominence = max(min_prominence, std_amp * 0.5)
+    
+    # 动态调整最小高度阈值
+    min_height = mean_amp + dynamic_prominence * 0.7
+    
+    # 多级峰值检测
+    # 第一级：显著峰值检测
+    primary_peaks, _ = signal.find_peaks(
+        amplitudes,
         distance=peak_distance,
-        prominence=min_prominence,
-        height=np.mean(amplitudes) + min_prominence
+        prominence=dynamic_prominence,
+        height=min_height
     )
     
-    if len(peak_indices) == 0:
-        peak_indices = find_peaks_manual(amplitudes, distance=peak_distance, prominence=min_prominence)
+    # 第二级：次要峰值检测（更宽松的条件）
+    secondary_peaks, _ = signal.find_peaks(
+        amplitudes,
+        distance=max(15, peak_distance // 2),  # 更小的间隔
+        prominence=max(1.0, dynamic_prominence * 0.6),
+        height=mean_amp + 1.0
+    )
     
-    peak_indices = peak_indices[:10] if len(peak_indices) > 10 else peak_indices
+    # 合并峰值并去重
+    all_peaks = list(set(list(primary_peaks) + list(secondary_peaks)))
     
-    peak_results = []
-    for idx in peak_indices:
-        freq_hz = frequencies[idx]
+    # 如果没有检测到峰值，使用原始方法
+    if len(all_peaks) == 0:
+        all_peaks = find_peaks_manual(amplitudes, distance=peak_distance//2, prominence=min_prominence*0.7)
+    
+    # 计算每个峰值的重要性分数
+    peak_scores = []
+    for idx in all_peaks:
+        if idx < 0 or idx >= len(amplitudes):
+            continue
+            
         amp_dbuv = amplitudes[idx]
+        freq_hz = frequencies[idx]
         fcc_limit, ce_limit = get_fcc_ce_limits(freq_hz)
         
+        # 计算裕量（相对于限值）
         fcc_margin = amp_dbuv - fcc_limit
         ce_margin = amp_dbuv - ce_limit
         
-        peak_results.append({
+        # 峰值重要性评分（综合考虑幅度和裕量）
+        amplitude_score = (amp_dbuv - mean_amp) / std_amp if std_amp > 0 else 0
+        margin_score = max(fcc_margin, ce_margin, 0)  # 只考虑正裕量
+        prominence_score = 0
+        
+        # 计算相对于相邻点的显著性
+        if 1 <= idx < len(amplitudes) - 1:
+            left_diff = amp_dbuv - amplitudes[idx-1]
+            right_diff = amp_dbuv - amplitudes[idx+1]
+            prominence_score = min(left_diff, right_diff)
+        
+        # 综合评分
+        total_score = amplitude_score * 0.4 + margin_score * 0.4 + prominence_score * 0.2
+        peak_scores.append((idx, total_score, amp_dbuv, fcc_margin, ce_margin, fcc_limit, ce_limit))
+    
+    # 按重要性排序
+    peak_scores.sort(key=lambda x: x[1], reverse=True)
+    
+    # 根据频率范围调整返回的峰值数量
+    freq_range_mhz = (frequencies[-1] - frequencies[0]) / 1e6
+    if freq_range_mhz < 1:  # 低于1MHz范围
+        max_peaks = 15
+    elif freq_range_mhz < 100:  # 1MHz-100MHz范围
+        max_peaks = 20
+    else:  # 高于100MHz范围
+        max_peaks = 25
+    
+    # 限制峰值数量，但确保包含超标的峰值
+    peak_results = []
+    exceed_peaks = []
+    normal_peaks = []
+    
+    for idx, score, amp_dbuv, fcc_margin, ce_margin, fcc_limit, ce_limit in peak_scores:
+        freq_hz = frequencies[idx]
+        peak_data = {
             'frequency_hz': freq_hz,
             'frequency_mhz': freq_hz / 1e6,
             'amplitude_dbuv': amp_dbuv,
@@ -869,8 +933,24 @@ def post_process_peak_search(frequencies, amplitudes, peak_distance=50, min_prom
             'fcc_margin': fcc_margin,
             'ce_margin': ce_margin,
             'exceed_fcc': fcc_margin > 0,
-            'exceed_ce': ce_margin > 0
-        })
+            'exceed_ce': ce_margin > 0,
+            'importance_score': score
+        }
+        
+        if fcc_margin > 0 or ce_margin > 0:
+            exceed_peaks.append(peak_data)
+        else:
+            normal_peaks.append(peak_data)
+    
+    # 首先添加超标的峰值
+    peak_results.extend(exceed_peaks[:max_peaks//2])
+    
+    # 然后添加重要的正常峰值
+    remaining_slots = max_peaks - len(peak_results)
+    peak_results.extend(normal_peaks[:remaining_slots])
+    
+    # 按频率排序以便显示
+    peak_results.sort(key=lambda x: x['frequency_hz'])
     
     return peak_results
 
