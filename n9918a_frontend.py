@@ -415,59 +415,152 @@ class EMCAnalyzerGUI:
             labels = []
             
             # 根据范围选择合适的步进
-            if max_f <= 1:  # kHz范围
-                base_ticks = [0.01, 0.03, 0.1, 0.3, 1.0]
-                for tick in base_ticks:
-                    if min_f <= tick <= max_f:
-                        ticks.append(tick)
-                        if tick >= 1:
-                            labels.append(f'{tick:.0f}M')
-                        elif tick >= 0.001:
-                            labels.append(f'{tick*1000:.0f}k')
+            if max_f <= 1:  # kHz范围 (优化9k-150k)
+                if min_f >= 0.009 and max_f <= 0.150:  # 9k-150k范围
+                    # 特别优化9k-150k范围
+                    major_ticks = [0.009, 0.01, 0.03, 0.05, 0.1, 0.150]
+                    major_labels = ['9k', '10k', '30k', '50k', '100k', '150k']
+                    
+                    minor_ticks = [0.015, 0.02, 0.025, 0.04, 0.06, 0.07, 0.08, 0.09, 0.12, 0.13]
+                    minor_labels = ['15k', '20k', '25k', '40k', '60k', '70k', '80k', '90k', '120k', '130k']
+                    
+                    # 添加主要刻度
+                    for tick, label in zip(major_ticks, major_labels):
+                        if min_f <= tick <= max_f:
+                            ticks.append(tick)
+                            labels.append(label)
+                    
+                    # 添加中间刻度
+                    for tick, label in zip(minor_ticks, minor_labels):
+                        if min_f <= tick <= max_f:
+                            ticks.append(tick)
+                            labels.append(label)
+                    
+                    # 排序
+                    combined = list(zip(ticks, labels))
+                    combined.sort(key=lambda x: x[0])
+                    ticks, labels = zip(*combined) if combined else ([], [])
+                    ticks, labels = list(ticks), list(labels)
+                else:
+                    # 原来的逻辑
+                    base_ticks = [0.01, 0.03, 0.1, 0.3, 1.0]
+                    for tick in base_ticks:
+                        if min_f <= tick <= max_f:
+                            ticks.append(tick)
+                            if tick >= 1:
+                                labels.append(f'{tick:.0f}M')
+                            elif tick >= 0.001:
+                                labels.append(f'{tick*1000:.0f}k')
+                            else:
+                                labels.append(f'{tick*1000000:.0f}')
+            elif max_f <= 30:  # MHz范围 (优化150k-30M)
+                if min_f >= 0.150 and max_f <= 30:  # 150k-30M范围
+                    # 特别优化150k-30M范围
+                    major_ticks = [0.150, 0.3, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0]
+                    major_labels = ['150k', '300k', '500k', '1M', '2M', '5M', '10M', '20M', '30M']
+                    
+                    minor_ticks = [0.2, 0.4, 0.6, 0.7, 0.8, 0.9, 1.5, 2.5, 3.0, 4.0, 6.0, 7.0, 8.0, 9.0, 15.0, 25.0]
+                    minor_labels = ['200k', '400k', '600k', '700k', '800k', '900k', '1.5M', '2.5M', '3M', '4M', '6M', '7M', '8M', '9M', '15M', '25M']
+                    
+                    # 添加主要刻度
+                    for tick, label in zip(major_ticks, major_labels):
+                        if min_f <= tick <= max_f:
+                            ticks.append(tick)
+                            labels.append(label)
+                    
+                    # 添加中间刻度
+                    for tick, label in zip(minor_ticks, minor_labels):
+                        if min_f <= tick <= max_f:
+                            ticks.append(tick)
+                            labels.append(label)
+                    
+                    # 排序
+                    combined = list(zip(ticks, labels))
+                    combined.sort(key=lambda x: x[0])
+                    ticks, labels = zip(*combined) if combined else ([], [])
+                    ticks, labels = list(ticks), list(labels)
+                else:
+                    # 原来的逻辑
+                    current = max(0.1, min_f)
+                    while current <= max_f:
+                        ticks.append(current)
+                        if current >= 1:
+                            labels.append(f'{current:.0f}M')
                         else:
-                            labels.append(f'{tick*1000000:.0f}')
-            elif max_f <= 10:  # MHz范围（更密集）
-                # 生成更密集的MHz标签
-                current = max(0.1, min_f)
-                while current <= max_f:
-                    ticks.append(current)
-                    if current >= 1:
-                        labels.append(f'{current:.0f}M')
-                    else:
-                        labels.append(f'{current*1000:.0f}k')
-                    if current < 0.1:
-                        current += 0.01
-                    elif current < 1:
-                        current += 0.1
-                    else:
-                        current += 0.5
-                    # 避免无限循环
-                    if current > max_f * 2:
-                        break
+                            labels.append(f'{current*1000:.0f}k')
+                        if current < 0.1:
+                            current += 0.01
+                        elif current < 1:
+                            current += 0.1
+                        else:
+                            current += 0.5
+                        # 避免无限循环
+                        if current > max_f * 2:
+                            break
             elif max_f <= 100:  # MHz范围
-                current = max(1.0, min_f)
+                # 更智能的刻度生成
+                range_freq = max_f - min_f
+                if range_freq <= 20:  # 小范围，更密集
+                    step = 1.0
+                elif range_freq <= 50:
+                    step = 2.0
+                else:
+                    step = 5.0
+                    
+                current = max(step, min_f)
                 while current <= max_f:
-                    ticks.append(current)
-                    labels.append(f'{current:.0f}M')
-                    current += max(1.0, (max_f - min_f) / 10)
-            elif max_f <= 1000:  # GHz范围
-                current = max(10.0, min_f)
-                while current <= max_f:
-                    ticks.append(current)
-                    if current >= 1000:
-                        labels.append(f'{current/1000:.1f}G')
-                    else:
+                    if current >= min_f:
+                        ticks.append(current)
                         labels.append(f'{current:.0f}M')
-                    current += max(50.0, (max_f - min_f) / 8)
+                    current += step
+            elif max_f <= 1000:  # GHz范围 (30M-1G是主要关注点)
+                # 特别优化30M-1G范围
+                range_freq = max_f - min_f
+                if min_f >= 30 and max_f <= 1000:  # 30M-1G范围
+                    # 在这个范围内生成更密集的刻度
+                    major_ticks = [30, 50, 100, 200, 300, 500, 1000]
+                    for tick in major_ticks:
+                        if min_f <= tick <= max_f:
+                            ticks.append(tick)
+                            if tick >= 1000:
+                                labels.append(f'{tick/1000:.1f}G')
+                            else:
+                                labels.append(f'{tick}M')
+                    
+                    # 添加中间刻度
+                    minor_ticks = [40, 60, 70, 80, 90, 150, 250, 400, 600, 800]
+                    for tick in minor_ticks:
+                        if min_f <= tick <= max_f:
+                            ticks.append(tick)
+                            labels.append(f'{tick}M')
+                    
+                    # 排序
+                    combined = list(zip(ticks, labels))
+                    combined.sort(key=lambda x: x[0])
+                    ticks, labels = zip(*combined) if combined else ([], [])
+                    ticks, labels = list(ticks), list(labels)
+                else:
+                    # 原来的逻辑
+                    step = max(50.0, range_freq / 8)
+                    current = max(step, min_f)
+                    while current <= max_f:
+                        ticks.append(current)
+                        if current >= 1000:
+                            labels.append(f'{current/1000:.1f}G')
+                        else:
+                            labels.append(f'{current:.0f}M')
+                        current += step
             else:  # 更高频率
-                current = max(100.0, min_f)
+                range_freq = max_f - min_f
+                step = max(100.0, range_freq / 6)
+                current = max(step, min_f)
                 while current <= max_f:
                     ticks.append(current)
                     if current >= 1000:
                         labels.append(f'{current/1000:.1f}G')
                     else:
                         labels.append(f'{current:.0f}M')
-                    current += (max_f - min_f) / 6
+                    current += step
             
             return ticks, labels
         
@@ -1010,35 +1103,157 @@ class EMCAnalyzerGUI:
         min_freq = min(freq_mhz)
         max_freq = max(freq_mhz)
         
-        # 根据频率范围设置合适的标签
-        if max_freq <= 150:  # kHz范围
-            ticks = [0.01, 0.03, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0, 150.0]
-            tick_labels = ['10k', '30k', '100k', '300k', '1M', '3M', '10M', '30M', '100M', '150M']
-        elif max_freq <= 1000:  # MHz范围
-            ticks = [0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0, 300.0, 1000.0]
-            tick_labels = ['100k', '300k', '1M', '3M', '10M', '30M', '100M', '300M', '1G']
-        elif max_freq <= 3000:  # GHz范围
-            ticks = [1.0, 3.0, 10.0, 30.0, 100.0, 300.0, 1000.0, 3000.0]
-            tick_labels = ['1M', '3M', '10M', '30M', '100M', '300M', '1G', '3G']
-        else:  # 更高频率
-            ticks = [10.0, 30.0, 100.0, 300.0, 1000.0, 3000.0, 10000.0]
-            tick_labels = ['10M', '30M', '100M', '300M', '1G', '3G', '10G']
+        # 生成更智能的频率标签
+        def generate_smart_ticks(min_f, max_f):
+            ticks = []
+            labels = []
+            
+            # 根据范围选择合适的步进
+            if max_f <= 1:  # kHz范围 (优化9k-150k)
+                if min_f >= 0.009 and max_f <= 0.150:  # 9k-150k范围
+                    # 特别优化9k-150k范围
+                    major_ticks = [0.009, 0.01, 0.03, 0.05, 0.1, 0.150]
+                    major_labels = ['9k', '10k', '30k', '50k', '100k', '150k']
+                    
+                    minor_ticks = [0.015, 0.02, 0.025, 0.04, 0.06, 0.07, 0.08, 0.09, 0.12, 0.13]
+                    minor_labels = ['15k', '20k', '25k', '40k', '60k', '70k', '80k', '90k', '120k', '130k']
+                    
+                    # 添加主要刻度
+                    for tick, label in zip(major_ticks, major_labels):
+                        if min_f <= tick <= max_f:
+                            ticks.append(tick)
+                            labels.append(label)
+                    
+                    # 添加中间刻度
+                    for tick, label in zip(minor_ticks, minor_labels):
+                        if min_f <= tick <= max_f:
+                            ticks.append(tick)
+                            labels.append(label)
+                    
+                    # 排序
+                    combined = list(zip(ticks, labels))
+                    combined.sort(key=lambda x: x[0])
+                    ticks, labels = zip(*combined) if combined else ([], [])
+                    ticks, labels = list(ticks), list(labels)
+                else:
+                    # 原来的逻辑
+                    base_ticks = [0.01, 0.03, 0.1, 0.3, 1.0]
+                    base_labels = ['10k', '30k', '100k', '300k', '1M']
+                    for tick, label in zip(base_ticks, base_labels):
+                        if min_f <= tick <= max_f:
+                            ticks.append(tick)
+                            labels.append(label)
+            elif max_f <= 30:  # MHz范围 (优化150k-30M)
+                if min_f >= 0.150 and max_f <= 30:  # 150k-30M范围
+                    # 特别优化150k-30M范围
+                    major_ticks = [0.150, 0.3, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0]
+                    major_labels = ['150k', '300k', '500k', '1M', '2M', '5M', '10M', '20M', '30M']
+                    
+                    minor_ticks = [0.2, 0.4, 0.6, 0.7, 0.8, 0.9, 1.5, 2.5, 3.0, 4.0, 6.0, 7.0, 8.0, 9.0, 15.0, 25.0]
+                    minor_labels = ['200k', '400k', '600k', '700k', '800k', '900k', '1.5M', '2.5M', '3M', '4M', '6M', '7M', '8M', '9M', '15M', '25M']
+                    
+                    # 添加主要刻度
+                    for tick, label in zip(major_ticks, major_labels):
+                        if min_f <= tick <= max_f:
+                            ticks.append(tick)
+                            labels.append(label)
+                    
+                    # 添加中间刻度
+                    for tick, label in zip(minor_ticks, minor_labels):
+                        if min_f <= tick <= max_f:
+                            ticks.append(tick)
+                            labels.append(label)
+                    
+                    # 排序
+                    combined = list(zip(ticks, labels))
+                    combined.sort(key=lambda x: x[0])
+                    ticks, labels = zip(*combined) if combined else ([], [])
+                    ticks, labels = list(ticks), list(labels)
+                else:
+                    # 原来的逻辑
+                    base_ticks = [0.1, 0.3, 1.0, 3.0, 10.0, 30.0]
+                    base_labels = ['100k', '300k', '1M', '3M', '10M', '30M']
+                    for tick, label in zip(base_ticks, base_labels):
+                        if min_f <= tick <= max_f:
+                            ticks.append(tick)
+                            labels.append(label)
+            elif max_f <= 1000:  # MHz范围 (重点优化30M-1G)
+                # 特别处理30M-1G范围
+                if min_f >= 30 and max_f <= 1000:
+                    # 主要刻度
+                    major_ticks = [30, 50, 100, 200, 300, 500, 1000]
+                    major_labels = ['30M', '50M', '100M', '200M', '300M', '500M', '1G']
+                    
+                    # 中间刻度
+                    minor_ticks = [40, 60, 70, 80, 90, 150, 250, 400, 600, 800]
+                    minor_labels = ['40M', '60M', '70M', '80M', '90M', '150M', '250M', '400M', '600M', '800M']
+                    
+                    # 添加主要刻度
+                    for tick, label in zip(major_ticks, major_labels):
+                        if min_f <= tick <= max_f:
+                            ticks.append(tick)
+                            labels.append(label)
+                    
+                    # 添加中间刻度
+                    for tick, label in zip(minor_ticks, minor_labels):
+                        if min_f <= tick <= max_f:
+                            ticks.append(tick)
+                            labels.append(label)
+                    
+                    # 排序
+                    combined = list(zip(ticks, labels))
+                    combined.sort(key=lambda x: x[0])
+                    ticks, labels = zip(*combined) if combined else ([], [])
+                    ticks, labels = list(ticks), list(labels)
+                else:
+                    # 其他MHz范围
+                    base_ticks = [0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0, 300.0, 1000.0]
+                    base_labels = ['100k', '300k', '1M', '3M', '10M', '30M', '100M', '300M', '1G']
+                    for tick, label in zip(base_ticks, base_labels):
+                        if min_f <= tick <= max_f:
+                            ticks.append(tick)
+                            labels.append(label)
+            elif max_f <= 3000:  # GHz范围
+                range_freq = max_f - min_f
+                if range_freq <= 200:  # 小范围更密集
+                    step = 50.0
+                elif range_freq <= 500:
+                    step = 100.0
+                else:
+                    step = 200.0
+                
+                current = max(step, min_f)
+                while current <= max_f:
+                    ticks.append(current)
+                    if current >= 1000:
+                        labels.append(f'{current/1000:.1f}G')
+                    else:
+                        labels.append(f'{current:.0f}M')
+                    current += step
+            else:  # 更高频率
+                range_freq = max_f - min_f
+                step = max(200.0, range_freq / 6)
+                current = max(step, min_f)
+                while current <= max_f:
+                    ticks.append(current)
+                    if current >= 1000:
+                        labels.append(f'{current/1000:.1f}G')
+                    else:
+                        labels.append(f'{current:.0f}M')
+                    current += step
+            
+            return ticks, labels
         
-        # 过滤出在当前范围内的标签
-        valid_ticks = []
-        valid_labels = []
-        for tick, label in zip(ticks, tick_labels):
-            if min_freq <= tick <= max_freq:
-                valid_ticks.append(tick)
-                valid_labels.append(label)
+        # 生成标签
+        ticks, labels = generate_smart_ticks(min_freq, max_freq)
         
         # 设置自定义标签
-        if valid_ticks:
-            self.ax.set_xticks(valid_ticks)
-            self.ax.set_xticklabels(valid_labels, rotation=45, ha='right')
+        if ticks:
+            self.ax.set_xticks(ticks)
+            self.ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=9)
         
         # 确保纵轴有数字标签
-        self.ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
+        self.ax.yaxis.set_major_locator(plt.MaxNLocator(nbins=10, integer=False))
         self.ax.tick_params(axis='y', which='major', labelsize=9)
         self.ax.tick_params(axis='x', which='major', labelsize=9)
 
