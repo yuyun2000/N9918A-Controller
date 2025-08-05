@@ -47,6 +47,58 @@ class EMCAnalyzerGUI:
         # 初始化状态
         self.update_status()
     
+    def auto_set_switch_positions(self):
+        """根据频率范围自动设置切换器位置"""
+        try:
+            # 检查设备是否已连接且已配置
+            if not self.controller.connected or not self.controller.current_config:
+                return
+            
+            # 获取当前配置的频率范围
+            config = self.controller.get_preset_configs().get(self.selected_preset_key, {})
+            if not config:
+                return
+                
+            start_freq = config.get("start_freq", 0)
+            stop_freq = config.get("stop_freq", 0)
+            freq_mhz = stop_freq / 1e6
+            
+            # 根据频率范围设置切换器位置
+            if freq_mhz < 30:  # 小于30MHz
+                # A2+D2
+                self.switch_controller.set_switch('A', 2)
+                self.switch_controller.set_switch('D', 2)
+                # B和C保持默认位置1
+                self.switch_controller.set_switch('B', 1)
+                self.switch_controller.set_switch('C', 1)
+                print(f"自动设置切换器: A2+D2 (频率范围: {start_freq/1e6:.3f}MHz - {stop_freq/1e6:.3f}MHz)")
+            elif 30 <= freq_mhz <= 3000:  # 30MHz～3GHz
+                # A2+D1
+                self.switch_controller.set_switch('A', 2)
+                self.switch_controller.set_switch('D', 1)
+                # B和C保持默认位置1
+                self.switch_controller.set_switch('B', 1)
+                self.switch_controller.set_switch('C', 1)
+                print(f"自动设置切换器: A2+D1 (频率范围: {start_freq/1e6:.3f}MHz - {stop_freq/1e6:.3f}MHz)")
+            else:
+                # 默认状态 A1+B1+C1+D1
+                self.switch_controller.set_switch('A', 1)
+                self.switch_controller.set_switch('B', 1)
+                self.switch_controller.set_switch('C', 1)
+                self.switch_controller.set_switch('D', 1)
+                print(f"自动设置切换器: A1+B1+C1+D1 (默认状态)")
+            
+            # 更新切换器状态显示
+            self.update_switch_status()
+            
+        except Exception as e:
+            print(f"自动设置切换器位置时出错: {e}")
+            # 即使出错也要确保切换器状态显示更新
+            try:
+                self.update_switch_status()
+            except:
+                pass
+    
     def create_widgets(self):
         # 创建主框架
         main_frame = ttk.Frame(self.root)
@@ -997,6 +1049,10 @@ class EMCAnalyzerGUI:
         self.measure_btn.config(state=tk.NORMAL)
         self.update_status()
         self.update_params_display()
+        
+        # 自动设置切换器位置
+        self.auto_set_switch_positions()
+        
         messagebox.showinfo("Success", "Device configured successfully!")
     
     def on_config_failed(self):
