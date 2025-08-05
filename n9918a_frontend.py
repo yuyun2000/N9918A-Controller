@@ -637,68 +637,50 @@ class EMCAnalyzerGUI:
             self.peak_text.insert(tk.END, "No EMI measurement data available\n")
             return
         
-        # 显示每种检测器模式的结果
-        for mode, data in self.emi_results.items():
-            if mode in ["measurement_summary", "sampling_info"]:
-                continue
-                
+        # 只显示QUASI_PEAK模式的结果
+        mode = "QUASI_PEAK"
+        if mode in self.emi_results:
+            data = self.emi_results[mode]
             if isinstance(data, tuple) and len(data) >= 2:
                 frequencies, amplitudes = data[0], data[1]
-                if amplitudes is None:
-                    continue
+                if amplitudes is not None:
+                    self.peak_text.insert(tk.END, f"\n{mode} Mode Results:\n")
+                    self.peak_text.insert(tk.END, "="*100 + "\n")
+                    header = f"{'No':<4} {'Freq [MHz]':<12} {'Amplitude [dBμV]':<18} {'FCC Limit [dBμV]':<18} {'FCC Margin [dB]':<18} {'Status':<15}\n"
+                    separator = "-"*100 + "\n"
                     
-                self.peak_text.insert(tk.END, f"\n{mode} Mode Results:\n")
-                self.peak_text.insert(tk.END, "="*80 + "\n")
-                header = f"{'Freq (MHz)':<12} {'Amplitude':<12} {'FCC Limit':<12} {'CE Limit':<12} {'FCC Margin':<12} {'CE Margin':<12} {'Status':<15}\n"
-                separator = "-"*80 + "\n"
-                
-                self.peak_text.insert(tk.END, header)
-                self.peak_text.insert(tk.END, separator)
-                
-                # 分析峰值
-                peaks = post_process_peak_search(frequencies, amplitudes)
-                # 显示所有超标的峰值和前10个重要峰值
-                exceed_peaks = [p for p in peaks if p['exceed_fcc'] or p['exceed_ce']]
-                normal_peaks = [p for p in peaks if not (p['exceed_fcc'] or p['exceed_ce'])]
-                
-                # 首先显示所有超标的峰值
-                for peak in exceed_peaks:
-                    status = []
-                    if peak['exceed_fcc']:
-                        status.append("FCC Fail")
-                    if peak['exceed_ce']:
-                        status.append("CE Fail")
-                    if not status:
-                        status = ["Pass"]
+                    self.peak_text.insert(tk.END, header)
+                    self.peak_text.insert(tk.END, separator)
                     
-                    line = f"{peak['frequency_mhz']:<12.3f} "
-                    line += f"{peak['amplitude_dbuv']:<12.2f} "
-                    line += f"{peak['fcc_limit']:<12.1f} "
-                    line += f"{peak['ce_limit']:<12.1f} "
-                    line += f"{peak['fcc_margin']:<12.2f} "
-                    line += f"{peak['ce_margin']:<12.2f} "
-                    line += f"{', '.join(status):<15}\n"
+                    # 分析峰值
+                    peaks = post_process_peak_search(frequencies, amplitudes)
                     
-                    self.peak_text.insert(tk.END, line)
-                
-                # 然后显示重要的正常峰值（最多10个）
-                if normal_peaks:
-                    self.peak_text.insert(tk.END, "\n--- Normal Peaks ---\n")
-                    for peak in normal_peaks[:10]:
+                    # 按照要求排序：首先是超标的排前面，然后是余量最少的，最后是余量最多的
+                    exceed_peaks = [p for p in peaks if p['exceed_fcc']]
+                    normal_peaks = [p for p in peaks if not p['exceed_fcc']]
+                    
+                    # 对超标的峰值按余量排序（余量越少越前）
+                    exceed_peaks.sort(key=lambda x: x['fcc_margin'],reverse=True)
+                    
+                    # 对正常的峰值按余量排序（余量越少越前）
+                    normal_peaks.sort(key=lambda x: x['fcc_margin'],reverse=True)
+                    
+                    # 合并所有峰值，确保左下图中显示的所有peak都在表格中标出来
+                    all_peaks = exceed_peaks + normal_peaks
+                    
+                    # 显示所有峰值（添加序号）
+                    for i, peak in enumerate(all_peaks, 1):
                         status = []
                         if peak['exceed_fcc']:
                             status.append("FCC Fail")
-                        if peak['exceed_ce']:
-                            status.append("CE Fail")
                         if not status:
                             status = ["Pass"]
                         
-                        line = f"{peak['frequency_mhz']:<12.3f} "
-                        line += f"{peak['amplitude_dbuv']:<12.2f} "
-                        line += f"{peak['fcc_limit']:<12.1f} "
-                        line += f"{peak['ce_limit']:<12.1f} "
-                        line += f"{peak['fcc_margin']:<12.2f} "
-                        line += f"{peak['ce_margin']:<12.2f} "
+                        line = f"{i:<4} "
+                        line += f"{peak['frequency_mhz']:<12.3f} "
+                        line += f"{peak['amplitude_dbuv']:<18.2f} "
+                        line += f"{peak['fcc_limit']:<18.1f} "
+                        line += f"{peak['fcc_margin']:<18.2f} "
                         line += f"{', '.join(status):<15}\n"
                         
                         self.peak_text.insert(tk.END, line)
@@ -1348,28 +1330,39 @@ class EMCAnalyzerGUI:
             self.peak_text.insert(tk.END, "No peaks detected\n")
             return
         
-        # 添加表头
-        header = f"{'Freq (MHz)':<12} {'Amp (dBμV)':<12} {'FCC Limit':<12} {'CE Limit':<12} {'FCC Margin':<12} {'CE Margin':<12} {'Status':<15}\n"
-        separator = "-" * 95 + "\n"
+        # 添加表头（只显示FCC标准，添加单位标识，添加序号列）
+        header = f"{'No':<4} {'Freq [MHz]':<12} {'Amplitude [dBμV]':<18} {'FCC Limit [dBμV]':<18} {'FCC Margin [dB]':<18} {'Status':<15}\n"
+        separator = "-" * 100 + "\n"
         
         self.peak_text.insert(tk.END, header)
         self.peak_text.insert(tk.END, separator)
         
-        for peak in self.current_peaks:
+        # 按照要求排序：首先是超标的排前面，然后是余量最少的，最后是余量最多的
+        exceed_peaks = [p for p in self.current_peaks if p['exceed_fcc']]
+        normal_peaks = [p for p in self.current_peaks if not p['exceed_fcc']]
+        
+        # 对超标的峰值按余量排序（余量越少越前）
+        exceed_peaks.sort(key=lambda x: x['fcc_margin'],reverse=True)
+        
+        # 对正常的峰值按余量排序（余量越少越前）
+        normal_peaks.sort(key=lambda x: x['fcc_margin'],reverse=True)
+        
+        # 合并所有峰值，确保左下图中显示的所有peak都在表格中标出来
+        all_peaks = exceed_peaks + normal_peaks
+        
+        # 显示所有峰值（添加序号）
+        for i, peak in enumerate(all_peaks, 1):
             status = []
             if peak['exceed_fcc']:
                 status.append("FCC Fail")
-            if peak['exceed_ce']:
-                status.append("CE Fail")
             if not status:
                 status = ["Pass"]
             
-            line = f"{peak['frequency_mhz']:<12.3f} "
-            line += f"{peak['amplitude_dbuv']:<12.2f} "
-            line += f"{peak['fcc_limit']:<12.1f} "
-            line += f"{peak['ce_limit']:<12.1f} "
-            line += f"{peak['fcc_margin']:<12.2f} "
-            line += f"{peak['ce_margin']:<12.2f} "
+            line = f"{i:<4} "
+            line += f"{peak['frequency_mhz']:<12.3f} "
+            line += f"{peak['amplitude_dbuv']:<18.2f} "
+            line += f"{peak['fcc_limit']:<18.1f} "
+            line += f"{peak['fcc_margin']:<18.2f} "
             line += f"{', '.join(status):<15}\n"
             
             self.peak_text.insert(tk.END, line)
