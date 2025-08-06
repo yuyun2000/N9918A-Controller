@@ -6,3 +6,5 @@ psutil
 pandas
 scipy
 pythonnet
+reportlab==3.6.12
+pillow
