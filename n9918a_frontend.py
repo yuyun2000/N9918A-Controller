@@ -160,6 +160,10 @@ class EMCAnalyzerGUI:
         self.ai_analysis_btn = ttk.Button(measure_frame, text="AI Analysis", command=self.perform_ai_analysis, state=tk.DISABLED)
         self.ai_analysis_btn.pack(side=tk.LEFT, padx=5)
         
+        # 导出PDF按钮
+        self.export_pdf_btn = ttk.Button(measure_frame, text="Export PDF", command=self.export_pdf, state=tk.DISABLED)
+        self.export_pdf_btn.pack(side=tk.LEFT, padx=5)
+        
         # 进度条
         self.progress_var = tk.StringVar(value="Ready")
         self.progress_label = ttk.Label(measure_frame, textvariable=self.progress_var)
@@ -225,6 +229,9 @@ class EMCAnalyzerGUI:
         self.switch_status_text.pack(fill=tk.BOTH, padx=5, pady=5)
         # 创建可调整的主显示区域
         self.create_main_display(main_frame)
+        
+        # 添加用户信息输入区域
+        self.create_user_info_panel(main_frame)
         
         # 添加调整比例的滑块
         self.create_ratio_control(main_frame)
@@ -694,6 +701,12 @@ class EMCAnalyzerGUI:
         self.progress_var.set("Fast EMI Measurement completed")
         self.save_btn.config(state=tk.NORMAL)
         self.ai_analysis_btn.config(state=tk.NORMAL)  # 启用AI分析按钮
+        # 检查是否是15秒或5分钟测试，如果是则启用导出PDF按钮
+        if "measurement_summary" in results:
+            summary = results["measurement_summary"]
+            duration = summary.get("actual_measurement_time", 0)
+            if duration == 15 or duration == 300:  # 15秒或300秒(5分钟)
+                self.export_pdf_btn.config(state=tk.NORMAL)
         
         # 显示测量摘要
         if "measurement_summary" in results:
@@ -826,6 +839,51 @@ class EMCAnalyzerGUI:
         
         # 创建峰值显示区域
         self.create_peak_display(self.peak_frame)
+    
+    def create_user_info_panel(self, parent):
+        """创建用户信息输入面板"""
+        # 创建用户信息框架
+        user_info_frame = ttk.LabelFrame(parent, text="User Information for PDF Report")
+        user_info_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # 创建输入框框架
+        input_frame = ttk.Frame(user_info_frame)
+        input_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        # 客户名称
+        customer_frame = ttk.Frame(input_frame)
+        customer_frame.pack(side=tk.LEFT, padx=5)
+        ttk.Label(customer_frame, text="Customer:").pack(anchor='w')
+        self.customer_var = tk.StringVar(value="M5Stack")
+        ttk.Entry(customer_frame, textvariable=self.customer_var, width=15).pack()
+        
+        # EUT
+        eut_frame = ttk.Frame(input_frame)
+        eut_frame.pack(side=tk.LEFT, padx=5)
+        ttk.Label(eut_frame, text="EUT:").pack(anchor='w')
+        self.eut_var = tk.StringVar(value="产品A")
+        ttk.Entry(eut_frame, textvariable=self.eut_var, width=15).pack()
+        
+        # 型号
+        model_frame = ttk.Frame(input_frame)
+        model_frame.pack(side=tk.LEFT, padx=5)
+        ttk.Label(model_frame, text="Model:").pack(anchor='w')
+        self.model_var = tk.StringVar(value="Model-X")
+        ttk.Entry(model_frame, textvariable=self.model_var, width=15).pack()
+        
+        # 工程师
+        engineer_frame = ttk.Frame(input_frame)
+        engineer_frame.pack(side=tk.LEFT, padx=5)
+        ttk.Label(engineer_frame, text="Engineer:").pack(anchor='w')
+        self.engineer_var = tk.StringVar(value="张工程师")
+        ttk.Entry(engineer_frame, textvariable=self.engineer_var, width=15).pack()
+        
+        # 备注
+        remark_frame = ttk.Frame(input_frame)
+        remark_frame.pack(side=tk.LEFT, padx=5)
+        ttk.Label(remark_frame, text="Remark:").pack(anchor='w')
+        self.remark_var = tk.StringVar(value="首次测试")
+        ttk.Entry(remark_frame, textvariable=self.remark_var, width=15).pack()
     
     def create_ratio_control(self, parent):
         """创建比例控制滑块"""
@@ -998,6 +1056,7 @@ class EMCAnalyzerGUI:
         self.config_btn.config(state=tk.DISABLED)
         self.measure_btn.config(state=tk.DISABLED)
         self.save_btn.config(state=tk.DISABLED)
+        self.export_pdf_btn.config(state=tk.DISABLED)  # 重置导出PDF按钮状态
         self.update_status()
         self.params_text.delete(1.0, tk.END)
         self.peak_text.delete(1.0, tk.END)
@@ -1059,6 +1118,7 @@ class EMCAnalyzerGUI:
         self.progress_var.set("Measurement completed")
         self.save_btn.config(state=tk.NORMAL)
         self.ai_analysis_btn.config(state=tk.NORMAL)  # 启用AI分析按钮
+        self.export_pdf_btn.config(state=tk.DISABLED)  # 禁用导出PDF按钮（仅15秒和5分钟测试可以导出）
         
         # 保存数据
         self.current_frequencies = frequencies
@@ -1541,6 +1601,9 @@ class EMCAnalyzerGUI:
 
     def show_ai_analysis_result(self, result):
         """显示AI分析结果"""
+        # 保存AI分析结果用于PDF导出
+        self._last_ai_result = result
+        
         # 创建新窗口显示结果
         result_window = tk.Toplevel(self.root)
         result_window.title("AI Analysis Result")
@@ -1569,6 +1632,196 @@ class EMCAnalyzerGUI:
     def on_ai_analysis_error(self, error_msg):
         """AI分析错误回调"""
         messagebox.showerror("AI Analysis Error", f"AI分析过程中出错:\n{error_msg}")
+
+    def perform_ai_analysis_for_pdf(self):
+        """为PDF导出执行AI分析"""
+        try:
+            # 检查是否有数据可以分析
+            if not self.emi_results and not self.current_peaks:
+                messagebox.showwarning("Warning", "No data available for AI analysis!")
+                return
+            
+            # 禁用导出PDF按钮，防止重复点击
+            self.export_pdf_btn.config(state=tk.DISABLED)
+            self.progress_var.set("AI Analysis for PDF in progress...")
+            
+            # 在新线程中执行AI分析
+            def ai_analysis_task():
+                try:
+                    # 导入chat.py中的ChatBot
+                    from chat import ChatBot, sys_prompt
+                    
+                    # 创建ChatBot实例
+                    bot = ChatBot(
+                        api_key="b8800336-579b-4322-b2e9-ca0f4443db71",
+                        base_url="https://ark.cn-beijing.volces.com/api/v3",
+                        model="ep-20250708144105-dqzdw",
+                        system_message=sys_prompt
+                    )
+                    
+                    # 准备输入数据
+                    # 获取频率范围
+                    start_freq = 0
+                    stop_freq = 0
+                    if self.controller and self.controller.current_config:
+                        config = self.controller.get_preset_configs().get(self.selected_preset_key, {})
+                        if config:
+                            start_freq = config.get("start_freq", 0)
+                            stop_freq = config.get("stop_freq", 0)
+                    
+                    # 获取测量时长
+                    duration = 0
+                    if "measurement_summary" in self.emi_results:
+                        summary = self.emi_results["measurement_summary"]
+                        duration = summary.get("actual_measurement_time", 0)
+                    
+                    # 构建输入文本
+                    input_text = f"频段:{start_freq/1e6:.3f}MHz-{stop_freq/1e6:.3f}MHz 测量时长：{duration}s 测量数据：\n"
+                    
+                    # 直接使用右下角表格中已经计算和排序好的数据
+                    # 获取表格中的文本内容
+                    table_content = self.peak_text.get("1.0", tk.END)
+                    
+                    # 提取表格内容部分（去掉开头的标题行）
+                    lines = table_content.strip().split('\n')
+                    if len(lines) > 3:  # 确保有足够的行
+                        # 添加QUASI_PEAK模式标题
+                        input_text += "QUASI_PEAK Mode Results:\n"
+                        
+                        # 添加分隔线和表头
+                        input_text += "="*100 + "\n"
+                        
+                        # 找到表头行的索引
+                        header_index = -1
+                        separator_index = -1
+                        for i, line in enumerate(lines):
+                            if "No" in line and "Freq [MHz]" in line and "Amplitude [dBμV]" in line:
+                                header_index = i
+                                break
+                        
+                        # 如果找到了表头，提取表头和数据行
+                        if header_index != -1:
+                            # 添加表头
+                            input_text += lines[header_index] + "\n"
+                            
+                            # 找到分隔线
+                            for i in range(header_index + 1, len(lines)):
+                                if "-" in lines[i] and len(lines[i]) > 50:  # 分隔线通常很长且包含很多"-"
+                                    separator_index = i
+                                    input_text += lines[i] + "\n"
+                                    break
+                            
+                            # 添加数据行（从分隔线之后开始）
+                            if separator_index != -1:
+                                for i in range(separator_index + 1, len(lines)):
+                                    # 检查是否是有效的数据行（不是空行且包含数字）
+                                    if lines[i].strip() and any(c.isdigit() for c in lines[i]):
+                                        input_text += lines[i] + "\n"
+                    
+                    # 调用AI分析
+                    response = bot.chat_no_stream(input_text)
+                    msg_obj = response.choices[0].message
+                    ai_result = msg_obj.content if hasattr(msg_obj, "content") else msg_obj.get("content", "")
+                    
+                    # 保存AI分析结果用于PDF导出
+                    self._last_ai_result = ai_result
+                    
+                    # 在主线程中继续执行PDF导出
+                    self.root.after(0, self.export_pdf)
+                except Exception as e:
+                    self.root.after(0, lambda: self.on_ai_analysis_error(str(e)))
+                finally:
+                    # 重新启用导出PDF按钮
+                    self.root.after(0, lambda: self.export_pdf_btn.config(state=tk.NORMAL))
+                    self.root.after(0, lambda: self.progress_var.set("Ready"))
+            
+            # 启动AI分析线程
+            threading.Thread(target=ai_analysis_task, daemon=True).start()
+        except Exception as e:
+            messagebox.showerror("Error", f"启动AI分析时出错:\n{e}")
+            self.export_pdf_btn.config(state=tk.NORMAL)
+            self.progress_var.set("Ready")
+
+    def export_pdf(self):
+        """导出PDF报告"""
+        try:
+            # 检查是否有数据可以导出
+            if not self.emi_results and not self.current_peaks:
+                messagebox.showwarning("Warning", "No data available for PDF export!")
+                return
+            
+            # 自动执行AI分析（如果还没有结果）
+            if not hasattr(self, '_last_ai_result') or not self._last_ai_result:
+                self.perform_ai_analysis_for_pdf()
+                return  # AI分析完成后会重新调用export_pdf
+            
+            # 保存波形图为PNG文件
+            graph_filename = "temp_spectrum_graph.png"
+            self.fig.savefig(graph_filename, dpi=150, bbox_inches='tight')
+            
+            # 获取用户输入的信息
+            customer = self.customer_var.get()
+            eut = self.eut_var.get()
+            model = self.model_var.get()
+            engineer = self.engineer_var.get()
+            remark = self.remark_var.get()
+            
+            # 获取频率范围
+            start_freq = 0
+            stop_freq = 0
+            if self.controller and self.controller.current_config:
+                config = self.controller.get_preset_configs().get(self.selected_preset_key, {})
+                if config:
+                    start_freq = config.get("start_freq", 0)
+                    stop_freq = config.get("stop_freq", 0)
+            
+            # 获取测量时长
+            duration = 0
+            if "measurement_summary" in self.emi_results:
+                summary = self.emi_results["measurement_summary"]
+                duration = summary.get("actual_measurement_time", 0)
+            
+            # 构建mode信息
+            mode = f"{start_freq/1e6:.3f}MHz-{stop_freq/1e6:.3f}MHz_{duration}s"
+            
+            # 获取表格数据（只取前15个点）
+            table_content = self.peak_text.get("1.0", tk.END)
+            print(table_content)
+ 
+            # 获取AI分析结果
+            summary_text = getattr(self, '_last_ai_result', '')
+            
+            # 生成PDF文件名
+            filename = f"{eut}-{mode}.pdf"
+            
+            # 导入PDF生成模块
+            from utils.create_pdf import generate_test_report
+            
+            # 项目信息
+            project_info = {
+                'customer': customer,
+                'eut': eut,
+                'model': model,
+                'mode': mode,
+                'engineer': engineer,
+                'remark': remark
+            }
+            
+            # 生成PDF报告
+            generate_test_report(
+                filename=filename,
+                logo_path="./assets/m5logo2022.png",
+                project_info=project_info,
+                test_graph_path=graph_filename,
+                spectrum_data=table_content,
+                summary_text=summary_text
+            )
+            
+            messagebox.showinfo("Success", f"PDF报告已生成: {filename}")
+        except Exception as e:
+            messagebox.showerror("Error", f"导出PDF时出错:\n{e}")
+            import traceback
+            traceback.print_exc()
 
 def main():
     root = tk.Tk()

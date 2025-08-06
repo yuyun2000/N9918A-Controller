@@ -6,6 +6,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfbase import pdfmetrics
 import os
+import re
 
 # === 固定公司信息 ===
 COMPANY_NAME = "深圳市明栈信息科技有限公司"
@@ -14,6 +15,7 @@ ENG_COMPANY_NAME = "M5Stack Technology Co., Ltd"
 # === 中文字体注册 ===
 font_path = './simfang.ttf'
 bold_font_path = './simhei.ttf'
+song_font_path = './simsun.ttc'  # 宋体
 
 try:
     if os.path.exists(font_path):
@@ -31,6 +33,13 @@ try:
 except:
     print("警告：未找到黑体字体文件")
 
+try:
+    if os.path.exists(song_font_path):
+        pdfmetrics.registerFont(TTFont('simsun', song_font_path))
+    else:
+        pdfmetrics.registerFont(TTFont('simsun', 'C:/Windows/Fonts/simsun.ttc'))
+except:
+    print("警告：未找到宋体字体文件")
 
 def generate_test_report(
     filename="test_report.pdf",
@@ -43,11 +52,9 @@ def generate_test_report(
     """
     生成测试报告PDF
     """
-
     # 默认项目信息
     if project_info is None:
         project_info = {}
-
     default_project_info = {
         'customer': 'N/A',
         'eut': 'N/A',
@@ -56,7 +63,6 @@ def generate_test_report(
         'engineer': 'Eden Chen',
         'remark': 'A2'
     }
-
     # 合并项目信息
     for key, value in default_project_info.items():
         if key not in project_info or not project_info[key]:
@@ -76,7 +82,6 @@ def generate_test_report(
         spaceBefore=12,
         fontName='simhei'
     )
-
     styleTableHd = ParagraphStyle(
         'TableHd',
         fontSize=8,
@@ -85,7 +90,6 @@ def generate_test_report(
         fontName='simhei',
         textColor=colors.white
     )
-
     styleSectionTitle = ParagraphStyle(
         'SectionTitle',
         fontSize=11,
@@ -95,23 +99,15 @@ def generate_test_report(
         fontName='simhei'
     )
 
+    # AI总结样式定义
     styleSummaryTitle = ParagraphStyle(
         'SummaryTitle',
         fontName='simhei',
         fontSize=14,
         leading=18,
-        spaceAfter=18,
-        spaceBefore=18,
-        alignment=1
-    )
-
-    styleSummaryContent = ParagraphStyle(
-        'SummaryContent',
-        fontName='simfang',
-        fontSize=10,
-        leading=14,
-        leftIndent=20,
-        spaceAfter=10
+        spaceAfter=20,
+        spaceBefore=10,
+        alignment=1  # 居中
     )
 
     # 第一页
@@ -120,20 +116,17 @@ def generate_test_report(
 
     # 第二页 - 总结页
     c.showPage()
-    _draw_summary_page(c, width, height, summary_text, styleSummaryTitle, styleSummaryContent)
+    _draw_summary_page(c, width, height, summary_text, styleSummaryTitle)
 
     c.save()
     print(f"PDF已生成: {filename}")
 
-
 def _draw_first_page(c, width, height, logo_path, project_info, test_graph_path, spectrum_data,
                      styleH, styleTableHd, styleSectionTitle):
     """绘制第一页内容，返回当前Y坐标"""
-
     # Logo（缩小尺寸）
     logo_width = 50
     logo_height = 50
-
     if os.path.exists(logo_path):
         try:
             from PIL import Image as PILImage
@@ -153,7 +146,6 @@ def _draw_first_page(c, width, height, logo_path, project_info, test_graph_path,
     p = Paragraph("Test Report", styleH)
     p.wrapOn(c, 400, 50)
     p.drawOn(c, (width - 400) / 2, height - 130)
-
     current_y = height - 140
 
     # 项目信息表标题
@@ -194,7 +186,6 @@ def _draw_first_page(c, width, height, logo_path, project_info, test_graph_path,
     else:
         c.setStrokeColor(colors.lightgrey)
         c.rect(55, current_y - 200, width - 110, 200)
-
     current_y -= 220
 
     # Suspected List 标题
@@ -215,7 +206,6 @@ def _draw_first_page(c, width, height, logo_path, project_info, test_graph_path,
             # 自动计算列宽
             col_count = len(table_data[0])
             col_widths = [(width - 100) // col_count] * col_count  # 平均分布
-
             row_height = 18  # 更紧凑行距
             table_height = len(table_data) * row_height
 
@@ -223,13 +213,11 @@ def _draw_first_page(c, width, height, logo_path, project_info, test_graph_path,
             if current_y - table_height < 50:
                 available_height = current_y - 80
                 max_rows = max(1, int(available_height / row_height))
-
                 if max_rows >= len(table_data):
                     _draw_table_on_page(c, table_data, col_widths, 50, current_y - table_height, row_height)
                 else:
                     partial_data = table_data[:max_rows]
                     _draw_table_on_page(c, partial_data, col_widths, 50, current_y - (len(partial_data) * row_height), row_height)
-
                     remaining_data = table_data[max_rows:]
                     if remaining_data:
                         c.showPage()
@@ -245,12 +233,10 @@ def _draw_first_page(c, width, height, logo_path, project_info, test_graph_path,
 
     return current_y
 
-
 def _draw_logo_only_header(c, width, height, logo_path):
     """只绘制Logo的页头"""
     logo_width = 50
     logo_height = 50
-
     if os.path.exists(logo_path):
         try:
             from PIL import Image as PILImage
@@ -261,9 +247,7 @@ def _draw_logo_only_header(c, width, height, logo_path):
         except Exception as e:
             print("加载图片失败:", e)
             c.drawImage(logo_path, 45, height - 70, width=logo_width, height=logo_height, mask='auto')
-
     c.line(40, height - 90, width - 40, height - 90)
-
 
 def _draw_table_on_page(c, table_data, col_widths, x, y, row_height):
     """在指定位置绘制表格"""
@@ -288,28 +272,35 @@ def _draw_table_on_page(c, table_data, col_widths, x, y, row_height):
     table.wrapOn(c, sum(col_widths), total_table_height)
     table.drawOn(c, x, y)
 
-def _parse_spectrum_data_list(spectrum_lines):
-    """解析频谱数据字符串列表"""
-    if not spectrum_lines:
+def _parse_spectrum_data_list(spectrum_input):
+    """解析频谱数据，支持字符串输入，仅保留前15条有效数据"""
+    if not spectrum_input:
         return None
 
-    lines = [line.strip() for line in spectrum_lines if line.strip()]
+    # 如果是字符串，则按行拆分
+    if isinstance(spectrum_input, str):
+        lines = spectrum_input.strip().split('\n')
+    else:
+        lines = [line.strip() for line in spectrum_input if line.strip()]
+
     if len(lines) < 3:
         return None
 
-    # 创建带换行的表头
+    # 定义表头
     table_header = [
         'NO.',
         'Freq\n[MHz]',
-        'Amplitude\n[dBμV]',
-        'FCC Limit\n[dBμV]',
+        'Amplitude\n[dBuV]',  # 修复：用 u 替换 μ
+        'FCC Limit\n[dBuV]',  # 修复：用 u 替换 μ
         'FCC Margin\n[dB]',
         'Status'
     ]
-
     table_data = [table_header]
+    count = 0  # 记录有效数据行数
 
-    for i, line in enumerate(lines):
+    for line in lines:
+        line = line.strip()
+        # 忽略标题行、分隔线等无效内容
         if 'No' in line and 'Freq' in line:
             continue
         if line.startswith('-') or '----' in line:
@@ -320,69 +311,291 @@ def _parse_spectrum_data_list(spectrum_lines):
         parts = line.split()
         if len(parts) >= 6:
             table_data.append(parts[:6])
+            count += 1
+            if count >= 15:  # 只保留前15个点
+                break
 
     return table_data if len(table_data) > 1 else None
 
+def _clean_text_for_pdf(text):
+    """清理文本中可能导致显示问题的字符 - 修复版"""
+    # 替换各种可能导致问题的字符
+    replacements = {
+        # 直接删除或替换问题字符
+        '•': '●',      # bullet point -> 实心圆点
+        '–': '-',      # en dash  
+        '—': '-',      # em dash
+        '"': '"',      # left double quotation
+        '"': '"',      # right double quotation
+        ''': "'",      # left single quotation
+        ''': "'",      # right single quotation
+        '…': '...',    # ellipsis
+        '×': 'x',      # multiplication sign
+        '°': '度',     # degree symbol
+        'μ': 'u',      # micro symbol
+        '★': '*',      # 星号替换
+        '☆': '*',      # 空心星号替换
+    }
+    
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    
+    return text
 
-def _draw_summary_page(c, width, height, summary_text, styleTitle, styleContent):
-    """绘制总结页"""
+def _parse_markdown_content(text):
+    """解析Markdown内容，返回结构化数据 - 修复版"""
+    if not text:
+        return []
+    
+    # 清理文本
+    text = _clean_text_for_pdf(text)
+    lines = text.strip().split('\n')
+    
+    content_blocks = []
+    
+    for line in lines:
+        line = line.strip()
+        
+        if not line:
+            content_blocks.append({'type': 'space', 'content': ''})
+            continue
+    
+        # H3标题 (###)
+        if line.startswith('#### '):
+            content_blocks.append({
+                'type': 'h4',
+                'content': line[5:].strip()
+            })
+        
+        # H3标题 (###)
+        if line.startswith('### '):
+            content_blocks.append({
+                'type': 'h3',
+                'content': line[4:].strip()
+            })
+        # H2标题 (##)
+        elif line.startswith('## '):
+            content_blocks.append({
+                'type': 'h2', 
+                'content': line[3:].strip()
+            })
+        # H1标题 (#)
+        elif line.startswith('# '):
+            content_blocks.append({
+                'type': 'h1',
+                'content': line[2:].strip()
+            })
+        # 数字列表 (1. 2. 3.)
+        elif re.match(r'^\d+\.\s+', line):
+            match = re.match(r'^(\d+)\.\s+(.*)', line)
+            if match:
+                num, content = match.groups()
+                content_blocks.append({
+                    'type': 'ordered_list',
+                    'number': num,
+                    'content': content
+                })
+        # 无序列表 (* - +) - 修复：统一使用 ● 符号
+        elif line.startswith(('* ', '- ', '+ ')):
+            content_blocks.append({
+                'type': 'unordered_list',
+                'content': line[2:].strip()  # 去掉前面的符号
+            })
+        # 普通段落（可能包含粗体）
+        else:
+            content_blocks.append({
+                'type': 'paragraph',
+                'content': line
+            })
+    
+    return content_blocks
 
-    # 标题
-    title = Paragraph("AI测试报告", styleTitle)
+def _process_bold_text(text):
+    """处理粗体标记 - 修复版"""
+    # 将 **text** 转换为 <font name="simhei">text</font>
+    # 这样可以确保粗体文本正确显示
+    processed_text = re.sub(r'\*\*(.*?)\*\*', r'<font name="simhei">\1</font>', text)
+    return processed_text
+
+def _draw_summary_page(c, width, height, summary_text, styleTitle):
+    """绘制AI总结页面 - 修复版"""
+    
+    # 绘制页面标题
+    title = Paragraph("AI测试分析报告", styleTitle)
     title.wrapOn(c, width - 100, 50)
-    title.drawOn(c, 50, height - 100)
-
-    if summary_text:
-        lines = summary_text.strip().split('\n')
-        current_y = height - 130
-        c.setFont('simfang', 10)
-
-        for line in lines:
-            if line.strip():
-                if line.strip().startswith('*') or line.strip().startswith('-') or line.strip().startswith('  '):
-                    c.drawString(70, current_y, line.strip())
-                else:
-                    c.setFont('simhei', 10)  # 加粗标题
-                    c.drawString(50, current_y, line.strip())
-                    c.setFont('simfang', 10)
-                current_y -= 12
-
-                if current_y < 100:
-                    break
+    title.drawOn(c, 50, height - 80)
+    
+    if not summary_text:
+        return
+    
+    current_y = height - 120
+    margin_left = 50
+    margin_right = 50
+    content_width = width - margin_left - margin_right
+    
+    # 解析Markdown内容
+    content_blocks = _parse_markdown_content(summary_text)
+    
+    # 定义各种样式
+    styles = {
+        'h1': ParagraphStyle(
+            'H1Style',
+            fontName='simhei',
+            fontSize=13,
+            leading=16,
+            spaceAfter=12,
+            spaceBefore=15,
+            textColor=colors.HexColor('#2c3e50')
+        ),
+        'h2': ParagraphStyle(
+            'H2Style', 
+            fontName='simhei',
+            fontSize=12,
+            leading=15,
+            spaceAfter=10,
+            spaceBefore=12,
+            textColor=colors.HexColor('#34495e')
+        ),
+        'h3': ParagraphStyle(
+            'H3Style',
+            fontName='simhei', 
+            fontSize=11,
+            leading=14,
+            spaceAfter=8,
+            spaceBefore=10,
+            textColor=colors.HexColor('#5d6d7e')
+        ),
+        'paragraph': ParagraphStyle(
+            'ParagraphStyle',
+            fontName='simfang',
+            fontSize=10,
+            leading=13,
+            spaceAfter=6,
+            leftIndent=0,
+            textColor=colors.black
+        ),
+        'ordered_list': ParagraphStyle(
+            'OrderedListStyle',
+            fontName='simfang',
+            fontSize=10,
+            leading=13,
+            spaceAfter=4,
+            leftIndent=15,
+            bulletIndent=0,
+            textColor=colors.black
+        ),
+        'unordered_list': ParagraphStyle(
+            'UnorderedListStyle',
+            fontName='simfang',
+            fontSize=10,
+            leading=13,
+            spaceAfter=4,
+            leftIndent=15,
+            bulletIndent=0,
+            textColor=colors.black
+        )
+    }
+    
+    # 渲染每个内容块
+    for block in content_blocks:
+        block_type = block['type']
+        content = block.get('content', '')
+        
+        # 空行处理
+        if block_type == 'space':
+            current_y -= 6
+            continue
+        
+        # 检查是否需要换页
+        estimated_height = 30  # 预估高度
+        if current_y - estimated_height < 60:
+            c.showPage()
+            current_y = height - 60
+        
+        # 根据类型渲染内容
+        if block_type in ['h1', 'h2', 'h3']:
+            style = styles[block_type]
+            p = Paragraph(content, style)
+            w, h = p.wrap(content_width, 100)
+            p.drawOn(c, margin_left, current_y - h)
+            current_y -= h + style.spaceAfter
+            
+        elif block_type == 'ordered_list':
+            number = block.get('number', '1')
+            style = styles['ordered_list']
+            # 处理粗体
+            processed_content = _process_bold_text(content)
+            formatted_content = f"{number}. {processed_content}"
+            p = Paragraph(formatted_content, style)
+            w, h = p.wrap(content_width - 15, 200)
+            p.drawOn(c, margin_left, current_y - h)
+            current_y -= h + style.spaceAfter
+            
+        elif block_type == 'unordered_list':
+            style = styles['unordered_list']
+            # 处理粗体
+            processed_content = _process_bold_text(content)
+            # 使用实心圆点 ●，确保能正常显示
+            formatted_content = f"● {processed_content}"
+            p = Paragraph(formatted_content, style)
+            w, h = p.wrap(content_width - 15, 200)
+            p.drawOn(c, margin_left, current_y - h)
+            current_y -= h + style.spaceAfter
+            
+        else:  # 普通段落
+            style = styles['paragraph']
+            # 处理粗体
+            processed_content = _process_bold_text(content)
+            p = Paragraph(processed_content, style)
+            w, h = p.wrap(content_width, 200)
+            p.drawOn(c, margin_left, current_y - h)
+            current_y -= h + style.spaceAfter
 
 # 使用示例
 if __name__ == "__main__":
     # 示例频谱数据（用户提供的格式）
-    spectrum_data = [
-        "No   Freq [MHz]   Amplitude [dBμV]   FCC Limit [dBμV]   FCC Margin [dB]    Status         ",
-        "----------------------------------------------------------------------------------------------------",
-        "1    175.015      43.35              40.0               3.35               FCC Fail       ",
-        "2    274.925      48.06              46.0               2.06               FCC Fail       ",
-        "3    47.945       39.34              40.0               -0.66              Pass           ",
-        "4    224.970      44.93              46.0               -1.07              Pass           ",
-        "5    240.005      40.48              46.0               -5.52              Pass     ",
-        "6    499.965      38.91              46.0               -7.09              Pass     ",
-        "7    499.965      38.91              46.0               -7.09              Pass     ",
-        "8    499.965      38.91              46.0               -7.09              Pass     ",
-        "9    499.965      38.91              46.0               -7.09              Pass     ",
-        "10    499.965      38.91              46.0               -7.09              Pass     ",
-        "11    499.965      38.91              46.0               -7.09              Pass     ",
-        "12    499.965      38.91              46.0               -7.09              Pass     ",
-        "13    499.965      38.91              46.0               -7.09              Pass     ",
-        "14    499.965      38.91              46.0               -7.09              Pass     ",
-        "15    499.965      38.91              46.0               -7.09              Pass     "
-    ]
+    spectrum_data = '''
+QUASI_PEAK Mode Results:
+====================================================================================================
+No   Freq [MHz]   Amplitude [dBμV]   FCC Limit [dBμV]   FCC Margin [dB]    Status         
+----------------------------------------------------------------------------------------------------
+1    175.015      42.82              40.0               2.82               FCC Fail       
+2    274.925      47.79              46.0               1.79               FCC Fail       
+3    46.975       39.91              40.0               -0.09              Pass           
+4    224.970      44.75              46.0               -1.25              Pass           
+5    499.965      38.77              46.0               -7.23              Pass           
+6    76.075       31.28              40.0               -8.72              Pass           
+7    240.005      36.50              46.0               -9.50              Pass           
+8    159.980      27.64              40.0               -12.36             Pass           
+9    72.680       27.63              40.0               -12.37             Pass           
+10   52.795       26.01              40.0               -13.99             Pass           
+11   450.010      31.46              46.0               -14.54             Pass           
+12   350.100      31.41              46.0               -14.59             Pass           
+13   170.650      24.65              40.0               -15.35             Pass           
+14   64.435       24.60              40.0               -15.40             Pass           
+15   69.285       24.26              40.0               -15.74             Pass           
+'''
     
     # 示例总结文本
-    summary_text = """一、概览
-* 检测频段：30MHz-1GHz
-* 测试采样时长：15秒
-* 检测模式及采样点数：
+    summary_text = """### 异常频点及简要数据信息列表  
+1. **46.975 MHz**：Amplitude=39.91 dBμV，限值=40.0 dBμV，Margin=-0.09 dB，Status=Pass（临界，接近限值）
+2. **175.015 MHz**：Amplitude=42.82 dBμV，限值=40.0 dBμV，Margin=2.82 dB，Status=Fail（超出限值2.82 dB）
+3. **274.925 MHz**：Amplitude=47.79 dBμV，限值=46.0 dBμV，Margin=1.79 dB，Status=Fail（超出限值1.79 dB，Margin≤2 dB临界）
 
-二、问题点明细
-以下为详细问题点分析...
-测试结果显示，在175.015MHz和274.925MHz频率点存在超标现象，需要进一步分析整改。
-其他频率点均符合FCC标准要求。"""
+### 异常点间的内在规律性
+1. **25 MHz基准时钟谐波关联**：175.015 MHz（25 MHz×7）和274.925 MHz（25 MHz×11）精确对应25 MHz基准时钟的7次、11次谐波（理论值分别为175 MHz、275 MHz），频率偏差<0.1 MHz，高度符合时钟谐波序列特征。
+2. **低频临界频点关联性**：46.975 MHz接近25 MHz×1.88（约47 MHz），可能为25 MHz时钟的2次谐波（50 MHz）的偏移，或与25 MHz时钟源相关的低频干扰（如电源纹波、晶振寄生频率）。
+
+## 测试建议
+
+* 检查25MHz时钟信号的屏蔽效果
+* 优化电源设计以减少纹波干扰
+* 考虑添加滤波器来抑制谐波辐射
+
+## 总结
+
+该产品在EMC测试中表现出明显的时钟谐波问题，需要针对性的设计改进。
+"""
     
     # 项目信息
     project_info = {
