@@ -8,3 +8,4 @@ scipy
 pythonnet
 reportlab==3.6.12
 pillow
+volcengine-python-sdk[ark]

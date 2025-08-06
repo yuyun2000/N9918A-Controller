@@ -386,7 +386,7 @@ if __name__ == "__main__":
     
     # 项目信息
     project_info = {
-        'customer': 'ABC公司',
+        'customer': 'M5Stack',
         'eut': '产品A',
         'model': 'Model-X',
         'mode': '正常工作模式',
