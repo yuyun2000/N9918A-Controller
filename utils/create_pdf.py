@@ -203,10 +203,17 @@ def _draw_first_page(c, width, height, logo_path, project_info, test_graph_path,
             table_data = _parse_spectrum_data_list(lines)
 
         if table_data and len(table_data) > 1:
-            # 自动计算列宽
+            # 根据列数自动计算列宽 - 新增支持8列
             col_count = len(table_data[0])
-            col_widths = [(width - 100) // col_count] * col_count  # 平均分布
-            row_height = 18  # 更紧凑行距
+            if col_count == 8:  # 包含CE标准的新格式
+                # 为新格式设计更合理的列宽分配
+                col_widths = [30, 50, 65, 55, 50, 55, 50, 90]  # 总宽度约495
+            elif col_count == 6:  # 原始格式
+                col_widths = [40, 60, 80, 80, 80, 80]
+            else:
+                col_widths = [(width - 100) // col_count] * col_count  # 平均分布
+            
+            row_height = 20  # 稍微增加行高以适应更多内容
             table_height = len(table_data) * row_height
 
             # 判断是否需要分页
@@ -250,30 +257,49 @@ def _draw_logo_only_header(c, width, height, logo_path):
     c.line(40, height - 90, width - 40, height - 90)
 
 def _draw_table_on_page(c, table_data, col_widths, x, y, row_height):
-    """在指定位置绘制表格"""
+    """在指定位置绘制表格 - 支持Status列的特殊处理"""
     num_rows = len(table_data)
-    # 单独设置第一行高度更大一些（例如30），其它维持默认row_height
-    row_heights = [30] + [row_height] * (num_rows - 1)  # 👈 表头用大一点的高度
+    # 根据内容调整行高
+    row_heights = [35] + [row_height] * (num_rows - 1)  # 表头用更大的高度
     
     table = Table(table_data, colWidths=col_widths, rowHeights=row_heights)
-    table.setStyle(TableStyle([
+    
+    # 基础样式
+    style_list = [
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#797d80')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
         ('FONTNAME', (0, 0), (-1, 0), 'simhei'),
-        ('FONTSIZE', (0, 0), (-1, 0), 8),
+        ('FONTSIZE', (0, 0), (-1, 0), 7),  # 表头字体稍小
         ('FONTNAME', (0, 1), (-1, -1), 'simfang'),
-        ('FONTSIZE', (0, 1), (-1, -1), 8),
+        ('FONTSIZE', (0, 1), (-1, -1), 7),  # 数据字体稍小
         ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('WORDWRAP', (0, 0), (-1, -1)),
-    ]))
+    ]
+    
+    # 为Status列添加特殊颜色处理
+    if len(table_data) > 1 and len(table_data[0]) >= 6:  # 确保有Status列
+        status_col_index = len(table_data[0]) - 1  # Status是最后一列
+        
+        for row_index in range(1, len(table_data)):  # 跳过表头
+            if row_index < len(table_data):
+                status_text = table_data[row_index][status_col_index]
+                # 根据状态设置不同颜色
+                if 'Fail' in status_text:
+                    style_list.append(('BACKGROUND', (status_col_index, row_index), (status_col_index, row_index), colors.HexColor('#ffebee')))
+                    style_list.append(('TEXTCOLOR', (status_col_index, row_index), (status_col_index, row_index), colors.red))
+                elif status_text == 'Pass':
+                    style_list.append(('BACKGROUND', (status_col_index, row_index), (status_col_index, row_index), colors.HexColor('#e8f5e8')))
+                    style_list.append(('TEXTCOLOR', (status_col_index, row_index), (status_col_index, row_index), colors.green))
+    
+    table.setStyle(TableStyle(style_list))
     total_table_height = sum(row_heights)
     table.wrapOn(c, sum(col_widths), total_table_height)
     table.drawOn(c, x, y)
 
 def _parse_spectrum_data_list(spectrum_input):
-    """解析频谱数据，支持字符串输入，仅保留前15条有效数据"""
+    """解析频谱数据，支持新的8列格式（包含CE标准）"""
     if not spectrum_input:
         return None
 
@@ -286,36 +312,80 @@ def _parse_spectrum_data_list(spectrum_input):
     if len(lines) < 3:
         return None
 
-    # 定义表头
-    table_header = [
-        'NO.',
-        'Freq\n[MHz]',
-        'Amplitude\n[dBuV]',  # 修复：用 u 替换 μ
-        'FCC Limit\n[dBuV]',  # 修复：用 u 替换 μ
-        'FCC Margin\n[dB]',
-        'Status'
-    ]
+    # 检测表格格式并定义相应表头
+    has_ce_columns = any('CE Limit' in line or 'CE Margin' in line for line in lines)
+    
+    if has_ce_columns:
+        # 新的8列格式（包含CE标准）
+        table_header = [
+            'NO.',
+            'Freq\n[MHz]', 
+            'Amplitude\n[dBuV]',
+            'FCC Limit\n[dBuV]',
+            'FCC Margin\n[dB]',
+            'CE Limit\n[dBuV]',
+            'CE Margin\n[dB]',
+            'Status'
+        ]
+        expected_cols = 8
+    else:
+        # 原始6列格式
+        table_header = [
+            'NO.',
+            'Freq\n[MHz]',
+            'Amplitude\n[dBuV]',
+            'FCC Limit\n[dBuV]', 
+            'FCC Margin\n[dB]',
+            'Status'
+        ]
+        expected_cols = 6
+
     table_data = [table_header]
     count = 0  # 记录有效数据行数
 
     for line in lines:
         line = line.strip()
         # 忽略标题行、分隔线等无效内容
-        if 'No' in line and 'Freq' in line:
-            continue
-        if line.startswith('-') or '----' in line:
+        if any(keyword in line for keyword in ['No', 'Freq', '====', '----']):
             continue
         if not line:
             continue
 
-        parts = line.split()
-        if len(parts) >= 6:
-            table_data.append(parts[:6])
+        # 使用更智能的分割方法处理Status列可能包含逗号和空格的情况
+        parts = _smart_split_line(line)
+        
+        if len(parts) >= expected_cols:
+            # 取前面的列，Status列可能包含多个单词
+            if expected_cols == 8:
+                # 8列格式：取前7列，剩余的合并为Status
+                row_data = parts[:7] + [' '.join(parts[7:])]
+            else:
+                # 6列格式：取前5列，剩余的合并为Status  
+                row_data = parts[:5] + [' '.join(parts[5:])]
+            
+            table_data.append(row_data)
             count += 1
-            if count >= 15:  # 只保留前15个点
+            if count >= 12:  # 只保留前15个点
                 break
 
     return table_data if len(table_data) > 1 else None
+
+def _smart_split_line(line):
+    """智能分割行数据，处理Status列可能包含逗号和多个单词的情况"""
+    # 首先按空格分割
+    parts = line.split()
+    
+    # 如果分割后的部分数量合理，直接返回
+    if len(parts) <= 10:  # 合理的列数范围
+        return parts
+    
+    # 否则，尝试重新组合Status部分
+    # 通常前面的数字列比较规整，Status在最后
+    if len(parts) > 8:
+        # 假设前7个是数值列，剩余的都属于Status
+        return parts[:7] + [' '.join(parts[7:])]
+    else:
+        return parts
 
 def _clean_text_for_pdf(text):
     """清理文本中可能导致显示问题的字符 - 修复版"""
@@ -359,8 +429,7 @@ def _parse_markdown_content(text):
         if not line:
             content_blocks.append({'type': 'space', 'content': ''})
             continue
-    
-        # H3标题 (###)
+
         if line.startswith('#### '):
             content_blocks.append({
                 'type': 'h4',
@@ -368,7 +437,7 @@ def _parse_markdown_content(text):
             })
         
         # H3标题 (###)
-        if line.startswith('### '):
+        elif line.startswith('### '):
             content_blocks.append({
                 'type': 'h3',
                 'content': line[4:].strip()
@@ -465,6 +534,15 @@ def _draw_summary_page(c, width, height, summary_text, styleTitle):
             spaceBefore=10,
             textColor=colors.HexColor('#5d6d7e')
         ),
+        'h4': ParagraphStyle(
+            'H4Style',
+            fontName='simhei', 
+            fontSize=10,
+            leading=13,
+            spaceAfter=6,
+            spaceBefore=8,
+            textColor=colors.HexColor('#7f8c8d')
+        ),
         'paragraph': ParagraphStyle(
             'ParagraphStyle',
             fontName='simfang',
@@ -551,29 +629,67 @@ def _draw_summary_page(c, width, height, summary_text, styleTitle):
             p.drawOn(c, margin_left, current_y - h)
             current_y -= h + style.spaceAfter
 
+
 # 使用示例
 if __name__ == "__main__":
     # 示例频谱数据（用户提供的格式）
     spectrum_data = '''
+
 QUASI_PEAK Mode Results:
 ====================================================================================================
-No   Freq [MHz]   Amplitude [dBμV]   FCC Limit [dBμV]   FCC Margin [dB]    Status         
-----------------------------------------------------------------------------------------------------
-1    175.015      42.82              40.0               2.82               FCC Fail       
-2    274.925      47.79              46.0               1.79               FCC Fail       
-3    46.975       39.91              40.0               -0.09              Pass           
-4    224.970      44.75              46.0               -1.25              Pass           
-5    499.965      38.77              46.0               -7.23              Pass           
-6    76.075       31.28              40.0               -8.72              Pass           
-7    240.005      36.50              46.0               -9.50              Pass           
-8    159.980      27.64              40.0               -12.36             Pass           
-9    72.680       27.63              40.0               -12.37             Pass           
-10   52.795       26.01              40.0               -13.99             Pass           
-11   450.010      31.46              46.0               -14.54             Pass           
-12   350.100      31.41              46.0               -14.59             Pass           
-13   170.650      24.65              40.0               -15.35             Pass           
-14   64.435       24.60              40.0               -15.40             Pass           
-15   69.285       24.26              40.0               -15.74             Pass           
+No   Freq [MHz]   Amplitude [dBμV]   FCC Limit [dBμV]   FCC Margin [dB]    CE Limit [dBμV]    CE Margin [dB]     Status         
+----------------------------------------------------------------------------------------------------------------------------------
+1    175.015      43.05              40.0               3.05               40.0               3.05               FCC Fail, CE Fail
+2    274.925      47.79              46.0               1.79               47.0               0.79               FCC Fail, CE Fail
+3    46.975       39.91              40.0               -0.09              40.0               -0.09              Pass           
+4    224.970      44.89              46.0               -1.11              40.0               4.89               CE Fail        
+5    240.005      39.35              46.0               -6.65              47.0               -7.65              Pass           
+6    499.965      38.77              46.0               -7.23              47.0               -8.23              Pass           
+7    76.075       31.57              40.0               -8.43              40.0               -8.43              Pass           
+8    51.825       31.16              40.0               -8.84              40.0               -8.84              Pass           
+9    159.980      27.77              40.0               -12.23             40.0               -12.23             Pass           
+10   72.680       27.63              40.0               -12.37             40.0               -12.37             Pass           
+11   450.010      31.50              46.0               -14.50             47.0               -15.50             Pass           
+12   350.100      31.46              46.0               -14.54             47.0               -15.54             Pass           
+13   67.345       25.41              40.0               -14.59             40.0               -14.59             Pass           
+14   170.650      24.65              40.0               -15.35             40.0               -15.35             Pass           
+15   55.705       24.61              40.0               -15.39             40.0               -15.39             Pass           
+16   62.495       24.35              40.0               -15.65             40.0               -15.65             Pass           
+17   400.055      29.66              46.0               -16.34             47.0               -17.34             Pass           
+18   165.315      22.63              40.0               -17.37             40.0               -17.37             Pass           
+19   82.380       22.59              40.0               -17.41             40.0               -17.41             Pass           
+20   179.865      21.88              40.0               -18.12             40.0               -18.12             Pass           
+21   42.125       21.36              40.0               -18.64             40.0               -18.64             Pass           
+22   215.270      21.23              40.0               -18.77             40.0               -18.77             Pass           
+23   374.835      27.02              46.0               -18.98             47.0               -19.98             Pass           
+24   191.990      20.65              40.0               -19.35             40.0               -19.35             Pass           
+25   125.060      20.44              40.0               -19.56             40.0               -19.56             Pass           
+26   31.940       20.26              40.0               -19.74             40.0               -19.74             Pass           
+27   281.230      25.79              46.0               -20.21             47.0               -21.21             Pass           
+28   209.935      19.37              40.0               -20.63             40.0               -20.63             Pass           
+29   300.145      24.91              46.0               -21.09             47.0               -22.09             Pass           
+30   204.115      18.19              40.0               -21.81             40.0               -21.81             Pass           
+31   267.650      23.84              46.0               -22.16             47.0               -23.16             Pass           
+32   259.405      23.73              46.0               -22.27             47.0               -23.27             Pass           
+33   284.625      23.53              46.0               -22.47             47.0               -23.47             Pass           
+34   255.040      22.46              46.0               -23.54             47.0               -24.54             Pass           
+35   246.795      21.09              46.0               -24.91             47.0               -25.91             Pass           
+36   221.575      20.97              46.0               -25.03             40.0               -19.03             Pass           
+37   36.790       14.83              40.0               -25.17             40.0               -25.17             Pass           
+38   288.505      20.57              46.0               -25.43             47.0               -26.43             Pass           
+39   324.880      19.59              46.0               -26.41             47.0               -27.41             Pass           
+40   294.810      19.41              46.0               -26.59             47.0               -27.59             Pass           
+41   320.030      17.41              46.0               -28.59             47.0               -29.59             Pass           
+42   549.920      17.01              46.0               -28.99             47.0               -29.99             Pass           
+43   725.005      16.92              46.0               -29.08             47.0               -30.08             Pass           
+44   434.005      14.83              46.0               -31.17             47.0               -32.17             Pass           
+45   625.095      13.91              46.0               -32.09             47.0               -33.09             Pass           
+46   774.960      13.72              46.0               -32.28             47.0               -33.28             Pass           
+47   675.050      13.62              46.0               -32.38             47.0               -33.38             Pass           
+48   618.305      13.47              46.0               -32.53             47.0               -33.53             Pass           
+49   480.080      13.36              46.0               -32.64             47.0               -33.64             Pass           
+50   607.635      12.45              46.0               -33.55             47.0               -34.55             Pass           
+
 '''
     
     # 示例总结文本
@@ -586,13 +702,13 @@ No   Freq [MHz]   Amplitude [dBμV]   FCC Limit [dBμV]   FCC Margin [dB]    Sta
 1. **25 MHz基准时钟谐波关联**：175.015 MHz（25 MHz×7）和274.925 MHz（25 MHz×11）精确对应25 MHz基准时钟的7次、11次谐波（理论值分别为175 MHz、275 MHz），频率偏差<0.1 MHz，高度符合时钟谐波序列特征。
 2. **低频临界频点关联性**：46.975 MHz接近25 MHz×1.88（约47 MHz），可能为25 MHz时钟的2次谐波（50 MHz）的偏移，或与25 MHz时钟源相关的低频干扰（如电源纹波、晶振寄生频率）。
 
-## 测试建议
+### 测试建议
 
 * 检查25MHz时钟信号的屏蔽效果
 * 优化电源设计以减少纹波干扰
 * 考虑添加滤波器来抑制谐波辐射
 
-## 总结
+#### 总结
 
 该产品在EMC测试中表现出明显的时钟谐波问题，需要针对性的设计改进。
 """

@@ -657,8 +657,8 @@ class EMCAnalyzerGUI:
                 if amplitudes is not None:
                     self.peak_text.insert(tk.END, f"\n{mode} Mode Results:\n")
                     self.peak_text.insert(tk.END, "="*100 + "\n")
-                    header = f"{'No':<4} {'Freq [MHz]':<12} {'Amplitude [dBμV]':<18} {'FCC Limit [dBμV]':<18} {'FCC Margin [dB]':<18} {'Status':<15}\n"
-                    separator = "-"*100 + "\n"
+                    header = f"{'No':<4} {'Freq [MHz]':<12} {'Amplitude [dBμV]':<18} {'FCC Limit [dBμV]':<18} {'FCC Margin [dB]':<18} {'CE Limit [dBμV]':<18} {'CE Margin [dB]':<18} {'Status':<15}\n"
+                    separator = "-"*130 + "\n"
                     
                     self.peak_text.insert(tk.END, header)
                     self.peak_text.insert(tk.END, separator)
@@ -684,6 +684,8 @@ class EMCAnalyzerGUI:
                         status = []
                         if peak['exceed_fcc']:
                             status.append("FCC Fail")
+                        if peak['exceed_ce']:
+                            status.append("CE Fail")
                         if not status:
                             status = ["Pass"]
                         
@@ -692,6 +694,8 @@ class EMCAnalyzerGUI:
                         line += f"{peak['amplitude_dbuv']:<18.2f} "
                         line += f"{peak['fcc_limit']:<18.1f} "
                         line += f"{peak['fcc_margin']:<18.2f} "
+                        line += f"{peak['ce_limit']:<18.1f} "
+                        line += f"{peak['ce_margin']:<18.2f} "
                         line += f"{', '.join(status):<15}\n"
                         
                         self.peak_text.insert(tk.END, line)
@@ -1396,9 +1400,9 @@ class EMCAnalyzerGUI:
             self.peak_text.insert(tk.END, "No peaks detected\n")
             return
         
-        # 添加表头（只显示FCC标准，添加单位标识，添加序号列）
-        header = f"{'No':<4} {'Freq [MHz]':<12} {'Amplitude [dBμV]':<18} {'FCC Limit [dBμV]':<18} {'FCC Margin [dB]':<18} {'Status':<15}\n"
-        separator = "-" * 100 + "\n"
+        # 添加表头（显示FCC和CE标准，添加单位标识，添加序号列）
+        header = f"{'No':<4} {'Freq [MHz]':<12} {'Amplitude [dBμV]':<18} {'FCC Limit [dBμV]':<18} {'FCC Margin [dB]':<18} {'CE Limit [dBμV]':<18} {'CE Margin [dB]':<18} {'Status':<15}\n"
+        separator = "-" * 130 + "\n"
         
         self.peak_text.insert(tk.END, header)
         self.peak_text.insert(tk.END, separator)
@@ -1421,6 +1425,8 @@ class EMCAnalyzerGUI:
             status = []
             if peak['exceed_fcc']:
                 status.append("FCC Fail")
+            if peak['exceed_ce']:
+                status.append("CE Fail")
             if not status:
                 status = ["Pass"]
             
@@ -1429,6 +1435,8 @@ class EMCAnalyzerGUI:
             line += f"{peak['amplitude_dbuv']:<18.2f} "
             line += f"{peak['fcc_limit']:<18.1f} "
             line += f"{peak['fcc_margin']:<18.2f} "
+            line += f"{peak['ce_limit']:<18.1f} "
+            line += f"{peak['ce_margin']:<18.2f} "
             line += f"{', '.join(status):<15}\n"
             
             self.peak_text.insert(tk.END, line)
