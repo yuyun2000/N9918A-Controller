@@ -27,7 +27,7 @@ class EMCAnalyzerGUI:
         self.root.minsize(1200, 800)
         
         # 创建后端控制器
-        self.controller = N9918AController(ip_address='192.168.20.39')
+        self.controller = N9918AController(ip_address='192.168.20.233')
 
         self.switch_controller = MiniCircuitsSwitchController()
         
@@ -113,7 +113,7 @@ class EMCAnalyzerGUI:
         ip_frame.pack(fill=tk.X, padx=5, pady=5)
         
         ttk.Label(ip_frame, text="Device IP:").pack(side=tk.LEFT)
-        self.ip_var = tk.StringVar(value="192.168.20.39")
+        self.ip_var = tk.StringVar(value="192.168.20.233")
         ip_entry = ttk.Entry(ip_frame, textvariable=self.ip_var, width=15)
         ip_entry.pack(side=tk.LEFT, padx=5)
         
@@ -155,6 +155,10 @@ class EMCAnalyzerGUI:
         
         self.save_btn = ttk.Button(measure_frame, text="Save Data", command=self.save_data, state=tk.DISABLED)
         self.save_btn.pack(side=tk.LEFT, padx=5)
+        
+        # AI分析按钮
+        self.ai_analysis_btn = ttk.Button(measure_frame, text="AI Analysis", command=self.perform_ai_analysis, state=tk.DISABLED)
+        self.ai_analysis_btn.pack(side=tk.LEFT, padx=5)
         
         # 进度条
         self.progress_var = tk.StringVar(value="Ready")
@@ -689,6 +693,7 @@ class EMCAnalyzerGUI:
         self.emi_results = results
         self.progress_var.set("Fast EMI Measurement completed")
         self.save_btn.config(state=tk.NORMAL)
+        self.ai_analysis_btn.config(state=tk.NORMAL)  # 启用AI分析按钮
         
         # 显示测量摘要
         if "measurement_summary" in results:
@@ -1053,6 +1058,7 @@ class EMCAnalyzerGUI:
         self.set_measurement_buttons_state(True)
         self.progress_var.set("Measurement completed")
         self.save_btn.config(state=tk.NORMAL)
+        self.ai_analysis_btn.config(state=tk.NORMAL)  # 启用AI分析按钮
         
         # 保存数据
         self.current_frequencies = frequencies
@@ -1426,6 +1432,143 @@ class EMCAnalyzerGUI:
             messagebox.showerror("Error", f"保存数据时出错:\n{e}")
             import traceback
             traceback.print_exc()
+
+    def perform_ai_analysis(self):
+        """执行AI分析"""
+        try:
+            # 检查是否有数据可以分析
+            if not self.emi_results and not self.current_peaks:
+                messagebox.showwarning("Warning", "No data available for AI analysis!")
+                return
+            
+            # 禁用AI分析按钮，防止重复点击
+            self.ai_analysis_btn.config(state=tk.DISABLED)
+            self.progress_var.set("AI Analysis in progress...")
+            
+            # 在新线程中执行AI分析
+            def ai_analysis_task():
+                try:
+                    # 导入chat.py中的ChatBot
+                    from chat import ChatBot, sys_prompt
+                    
+                    # 创建ChatBot实例
+                    bot = ChatBot(
+                        api_key="b8800336-579b-4322-b2e9-ca0f4443db71",
+                        base_url="https://ark.cn-beijing.volces.com/api/v3",
+                        model="ep-20250708144105-dqzdw",
+                        system_message=sys_prompt
+                    )
+                    
+                    # 准备输入数据
+                    # 获取频率范围
+                    start_freq = 0
+                    stop_freq = 0
+                    if self.controller and self.controller.current_config:
+                        config = self.controller.get_preset_configs().get(self.selected_preset_key, {})
+                        if config:
+                            start_freq = config.get("start_freq", 0)
+                            stop_freq = config.get("stop_freq", 0)
+                    
+                    # 获取测量时长
+                    duration = 0
+                    if "measurement_summary" in self.emi_results:
+                        summary = self.emi_results["measurement_summary"]
+                        duration = summary.get("actual_measurement_time", 0)
+                    
+                    # 构建输入文本
+                    input_text = f"频段:{start_freq/1e6:.3f}MHz-{stop_freq/1e6:.3f}MHz 测量时长：{duration}s 测量数据：\n"
+                    
+                    # 直接使用右下角表格中已经计算和排序好的数据
+                    # 获取表格中的文本内容
+                    table_content = self.peak_text.get("1.0", tk.END)
+                    
+                    # 提取表格内容部分（去掉开头的标题行）
+                    lines = table_content.strip().split('\n')
+                    if len(lines) > 3:  # 确保有足够的行
+                        # 添加QUASI_PEAK模式标题
+                        input_text += "QUASI_PEAK Mode Results:\n"
+                        
+                        # 添加分隔线和表头
+                        input_text += "="*100 + "\n"
+                        
+                        # 找到表头行的索引
+                        header_index = -1
+                        separator_index = -1
+                        for i, line in enumerate(lines):
+                            if "No" in line and "Freq [MHz]" in line and "Amplitude [dBμV]" in line:
+                                header_index = i
+                                break
+                        
+                        # 如果找到了表头，提取表头和数据行
+                        if header_index != -1:
+                            # 添加表头
+                            input_text += lines[header_index] + "\n"
+                            
+                            # 找到分隔线
+                            for i in range(header_index + 1, len(lines)):
+                                if "-" in lines[i] and len(lines[i]) > 50:  # 分隔线通常很长且包含很多"-"
+                                    separator_index = i
+                                    input_text += lines[i] + "\n"
+                                    break
+                            
+                            # 添加数据行（从分隔线之后开始）
+                            if separator_index != -1:
+                                for i in range(separator_index + 1, len(lines)):
+                                    # 检查是否是有效的数据行（不是空行且包含数字）
+                                    if lines[i].strip() and any(c.isdigit() for c in lines[i]):
+                                        input_text += lines[i] + "\n"
+                    
+                    # 调用AI分析
+                    response = bot.chat_no_stream(input_text)
+                    msg_obj = response.choices[0].message
+                    ai_result = msg_obj.content if hasattr(msg_obj, "content") else msg_obj.get("content", "")
+                    
+                    # 在主线程中显示结果
+                    self.root.after(0, lambda: self.show_ai_analysis_result(ai_result))
+                except Exception as e:
+                    self.root.after(0, lambda: self.on_ai_analysis_error(str(e)))
+                finally:
+                    # 重新启用AI分析按钮
+                    self.root.after(0, lambda: self.ai_analysis_btn.config(state=tk.NORMAL))
+                    self.root.after(0, lambda: self.progress_var.set("Ready"))
+            
+            # 启动AI分析线程
+            threading.Thread(target=ai_analysis_task, daemon=True).start()
+        except Exception as e:
+            messagebox.showerror("Error", f"启动AI分析时出错:\n{e}")
+            self.ai_analysis_btn.config(state=tk.NORMAL)
+            self.progress_var.set("Ready")
+
+    def show_ai_analysis_result(self, result):
+        """显示AI分析结果"""
+        # 创建新窗口显示结果
+        result_window = tk.Toplevel(self.root)
+        result_window.title("AI Analysis Result")
+        result_window.geometry("800x600")
+        result_window.minsize(600, 400)
+        
+        # 创建文本框和滚动条
+        text_frame = ttk.Frame(result_window)
+        text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        text_widget = tk.Text(text_frame, wrap=tk.WORD)
+        scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=text_widget.yview)
+        text_widget.configure(yscrollcommand=scrollbar.set)
+        
+        text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # 插入AI分析结果
+        text_widget.insert(tk.END, result)
+        text_widget.config(state=tk.DISABLED)  # 设置为只读
+        
+        # 添加关闭按钮
+        close_btn = ttk.Button(result_window, text="Close", command=result_window.destroy)
+        close_btn.pack(pady=10)
+
+    def on_ai_analysis_error(self, error_msg):
+        """AI分析错误回调"""
+        messagebox.showerror("AI Analysis Error", f"AI分析过程中出错:\n{error_msg}")
 
 def main():
     root = tk.Tk()
