@@ -69,13 +69,10 @@ class N9918ANAController:
         self.switch_connected = False
         print("Disconnected from N9918A and switch controller")
     
-    def perform_quickcal_full2port(self):
+    
+    def perform_calibration(self):
         """
-        远程执行QuickCal: Full 2-port (S12)快速校准流程。
-        步骤：
-        1. 切换到Step1配置，发送 QuickCal启动命令
-        2. 等待仪器提示切换，再切换到Step2配置
-        3. 完成校准
+        执行QuickCal 2端口校准（根据官方SCPI文档），自动完成流程。
         """
         if not self.connected:
             print("ERROR: Device not connected")
@@ -87,44 +84,35 @@ class N9918ANAController:
                 return False
 
         try:
-            print("🚀 开始 Full 2-Port QuickCal 快速校准流程")
-            # Step 1: 切换到b2 c1 (假如这个位置是仪器首次要求的)
+            print("🚀 开始2端口QuickCal...")
+
+            # Step 1: 按提示连线，用于你第一个校准状态，通常先连THRU或标准负载
             self.switch_controller.set_switch('B', 2)
             time.sleep(0.5)
             self.switch_controller.set_switch('C', 1)
             time.sleep(0.5)
-            print("📡 发送 QuickCal Full 2-Port 启动命令")
-            # 启动2端口QuickCal
-            self.device.write("SENS:CORR:COLL:QC:INIT F2P")
 
-            # 等待仪器提示切线（仪器内部会控制流程，也可等待 *OPC? 返回1 表示结束）
-            # 你可以轮询或者sleep合适的时间，也可以捕获仪器的REQUEST (如仪器支持问SCPI提示/消息)
-            print("⏳ 等待仪器请求切换到校准步骤2（请留意仪器屏幕提示）")
-            # 通常为人工确认暂时sleep一下，再切换，
-            time.sleep(3)   # 你可以按实际等待时间调整
+            # 发送QuickCal命令
+            print("📡 发送QuickCal命令: CORR:COLL:METH:QCAL:CAL 1,2")
+            self.device.write("CORR:COLL:METH:QCAL:CAL 1,2")
 
-            # Step 2: 切换到b1
-            print("🔁 仪器等待第2步，切换到: b1")
-            self.switch_controller.set_switch('B', 1)
-            time.sleep(0.5)
-            # 此时QuickCal内置命令仍在进行，仪器会自动结束校准，无需额外发送step2命令。
+            # 仪器进入校准流程，会依次提示（通常屏幕会提示改连线/换到第二步等）
+            # 你可以手动观察仪器，或根据自动化流程等待（这里假定所有换线你用sleep或者人工判断）
+            # 更高级的做法是用Sweep Complete/Prompt 查询（具体仪器支持什么SCPI请查帮助）
 
-            # 使用*OPC?等待读校准流程彻底结束（保险做法）
-            print("⏳ 等待校准流程结束...")
-            result = self.device.query("*OPC?")
-            assert result.strip() == '1', f"FieldFox did not finish calibration, *OPC? replied {result}"
-            print("✅ Full 2-Port QuickCal 完成！")
+            print("⏳ 等待仪器流程完成（建议根据实际界面或日志适当加等待）")
+            while True:
+                opc = self.device.query("*OPC?")
+                if opc.strip() == '1':
+                    break
+                time.sleep(1)
+            
+            print("✅ 2端口QuickCal完成！")
             return True
 
         except Exception as e:
-            print(f"ERROR: Full 2-Port QuickCal失败 - {e}")
+            print(f"ERROR: QuickCal校准失败 - {e}")
             return False
-    
-    def perform_calibration(self):
-        """
-        执行2端口QuickCal（自动步骤，不分step1/2，由仪器内部控制）
-        """
-        return self.perform_quickcal_full2port()
 
     def measure_s11(self):
         """
