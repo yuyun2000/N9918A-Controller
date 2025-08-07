@@ -32,6 +32,7 @@
    ```bash
    python n9918a_frontend.py
    ```
+   如果你创建了一个名为‘visa’的conda环境，可以双击‘run.bat’运行脚本
 
 ## 使用说明
 
