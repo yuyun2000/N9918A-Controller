@@ -61,7 +61,7 @@ class EMCAnalyzerGUI:
                 
             start_freq = config.get("start_freq", 0)
             stop_freq = config.get("stop_freq", 0)
-            freq_mhz = stop_freq / 1e6
+            freq_mhz = start_freq / 1e6
             
             # 根据频率范围设置切换器位置
             if freq_mhz < 30:  # 小于30MHz
@@ -292,11 +292,19 @@ class EMCAnalyzerGUI:
             for switch, pos in switch_status.items():
                 self.switch_status_text.insert(tk.END, f"  {switch}: Position {pos}\n")
 
-            # 更新按钮状态
+            # # 更新按钮状态
+            # for switch, pos in switch_status.items():
+            #     btn1, btn2 = self.switch_buttons[switch]
+            #     btn1.config(state=tk.NORMAL if pos != 1 else tk.DISABLED)
+            #     btn2.config(state=tk.NORMAL if pos != 2 else tk.DISABLED)
+
+            # 禁用所有按钮（仅显示状态，不允许手动切换）
             for switch, pos in switch_status.items():
                 btn1, btn2 = self.switch_buttons[switch]
-                btn1.config(state=tk.NORMAL if pos != 1 else tk.DISABLED)
-                btn2.config(state=tk.NORMAL if pos != 2 else tk.DISABLED)
+                # 当前位置的按钮设为DISABLED状态（表示已选中）
+                # 非当前位置的按钮也设为DISABLED（禁止手动切换）
+                btn1.config(state=tk.DISABLED)
+                btn2.config(state=tk.DISABLED)
 
         except Exception as e:
             self.switch_status_text.delete(1.0, tk.END)
