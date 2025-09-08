@@ -23,8 +23,8 @@ class EMCAnalyzerGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("N9918A EMC Analyzer")
-        self.root.geometry("1400x900")
-        self.root.minsize(1200, 800)
+        self.root.geometry("1900x1000")
+        self.root.minsize(1200,800)
         
         # 创建后端控制器
         self.controller = N9918AController(ip_address='192.168.20.233')
@@ -101,7 +101,25 @@ class EMCAnalyzerGUI:
     
     def create_widgets(self):
         # 创建主框架
-        main_frame = ttk.Frame(self.root)
+        self.canvas_container = tk.Canvas(self.root)
+        self.scrollbar = ttk.Scrollbar(self.root, orient="vertical", command=self.canvas_container.yview)
+        self.scrollable_frame = ttk.Frame(self.canvas_container)
+
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.canvas_container.configure(
+                scrollregion=self.canvas_container.bbox("all")
+            )
+        )
+
+        self.canvas_container.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.canvas_container.configure(yscrollcommand=self.scrollbar.set)
+
+        self.canvas_container.pack(side="left", fill="both", expand=True)
+        self.scrollbar.pack(side="right", fill="y")
+
+        # 将 main_frame 改为放在 scrollable_frame 中
+        main_frame = ttk.Frame(self.scrollable_frame)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         # 顶部控制面板
