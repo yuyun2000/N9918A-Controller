@@ -46,49 +46,53 @@
         <strong>5 保存数据或导出报告</strong>
       </section>
 
+      <section class="panel shared-connection-panel" aria-label="公共设备连接">
+        <div class="shared-connect-grid">
+          <div>
+            <div class="panel-title">
+              <span>设备</span>
+              <h2>公共连接与 Switch</h2>
+              <button class="help-button" type="button" aria-label="公共连接说明" data-help="SA 和 NA 共用这里的仪器 IP 与 RF Switch 连接。先连接 N9918A，再连接 switchbox；切换 SA/NA 模式后会由后端发送对应 INST:SEL 命令。">?</button>
+            </div>
+            <div class="inline-form">
+              <label>
+                设备 IP
+                <input id="deviceIp" value="192.168.20.233" autocomplete="off" />
+              </label>
+              <button id="connectBtn" class="primary">连接仪器</button>
+              <button id="disconnectBtn">断开仪器</button>
+            </div>
+          </div>
+          <div>
+            <div class="panel-title compact">
+              <span>RF</span>
+              <h3>Mini-Circuits 射频切换器</h3>
+              <button class="help-button" type="button" aria-label="射频切换器说明" data-help="连接后可读取 A/B/C/D 位置。SA 模式会按测试频段自动给出建议位置；NA 校准按文档标准 QuickCal 顺序执行 OPEN=B2D1、LOAD=B1D1、ANTENNA=B2D2。手动切换前请确认线缆和夹具连接。">?</button>
+            </div>
+            <div class="switch-actions">
+              <button id="connectSwitchBtn">连接切换器</button>
+              <button id="refreshSwitchBtn">刷新状态</button>
+              <button id="disconnectSwitchBtn">断开切换器</button>
+            </div>
+            <div class="switch-grid" id="switchGrid"></div>
+            <pre class="mini-readout" id="switchReadout">切换器未连接。</pre>
+          </div>
+        </div>
+      </section>
+
       <main id="saWorkspace" class="workspace mode-workspace active">
-        <section class="panel command-panel">
+        <section class="panel run-panel">
           <div class="panel-title">
             <span>01</span>
-            <h2>连接与配置</h2>
-            <button class="help-button" type="button" aria-label="连接与配置说明" data-help="先确认 N9918A 与电脑在同一网络，再输入仪器 IP。SA 配置会设置频段、点数、RBW/VBW，并在 RF Switch 已连接时按频段自动切到建议位置。">?</button>
+            <h2>SA 测量流程</h2>
+            <button class="help-button" type="button" aria-label="SA 测量流程说明" data-help="建议先用单次扫描确认频谱和连接，再运行 15 秒快速 EMI 采样；5 分钟采样耗时更长，适合最终确认。测量中可点停止请求中断。">?</button>
           </div>
-          <div class="inline-form">
-            <label>
-              设备 IP
-              <input id="deviceIp" value="192.168.20.233" autocomplete="off" />
-            </label>
-            <button id="connectBtn" class="primary">连接仪器</button>
-            <button id="disconnectBtn">断开仪器</button>
-          </div>
-
           <label class="full">
             SA 测试配置
             <select id="presetSelect"></select>
           </label>
           <button id="configureBtn" class="wide">应用 SA 配置并自动切换</button>
-
           <div class="divider"></div>
-          <div class="panel-title compact">
-            <span>RF</span>
-            <h3>Mini-Circuits 射频切换器</h3>
-            <button class="help-button" type="button" aria-label="射频切换器说明" data-help="连接后可读取 A/B/C/D 位置。SA 模式会按测试频段自动给出建议位置；NA 校准会固定使用 LOAD=B1D1、OPEN=B2D1、ANTENNA=B2D2。手动切换前请确认线缆和夹具连接。">?</button>
-          </div>
-          <div class="switch-actions">
-            <button id="connectSwitchBtn">连接切换器</button>
-            <button id="refreshSwitchBtn">刷新状态</button>
-            <button id="disconnectSwitchBtn">断开切换器</button>
-          </div>
-          <div class="switch-grid" id="switchGrid"></div>
-          <pre class="mini-readout" id="switchReadout">切换器未连接。</pre>
-        </section>
-
-        <section class="panel run-panel">
-          <div class="panel-title">
-            <span>02</span>
-            <h2>SA 测量流程</h2>
-            <button class="help-button" type="button" aria-label="SA 测量流程说明" data-help="建议先用单次扫描确认频谱和连接，再运行 15 秒快速 EMI 采样；5 分钟采样耗时更长，适合最终确认。测量中可点停止请求中断。">?</button>
-          </div>
           <div class="run-buttons">
             <button id="demoBtn">加载演示数据</button>
             <button id="singleBtn" class="primary">单次扫描</button>
@@ -203,7 +207,7 @@
           <div class="panel-title compact">
             <span>CAL</span>
             <h3>2 自动校准</h3>
-            <button class="help-button" type="button" aria-label="自动校准说明" data-help="校准必须同时连接 N9918A 与 switchbox。流程固定为 LOAD=B1D1 执行 CORR:COLL:LOAD，OPEN=B2D1 执行 QuickCal INT/open-port，保存后切到 ANTENNA=B2D2 才允许测量。">?</button>
+            <button class="help-button" type="button" aria-label="自动校准说明" data-help="校准必须同时连接 N9918A 与 switchbox。按文档标准 QuickCal 流程：先 OPEN=B2D1 执行 CORR:COLL:INT，再 LOAD=B1D1 执行 CORR:COLL:LOAD，保存后切到 ANTENNA=B2D2 才允许测量。">?</button>
           </div>
           <div class="run-buttons">
             <button id="naCalibrateBtn" class="primary">开始自动校准</button>

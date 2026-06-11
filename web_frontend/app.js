@@ -186,6 +186,12 @@ function updateStatus(status) {
   elements.demoBtn.disabled = measuring;
   elements.modeSA.disabled = measuring || status.switching_mode;
   elements.modeNA.disabled = measuring || status.switching_mode;
+  elements.connectSwitchBtn.disabled = measuring;
+  elements.refreshSwitchBtn.disabled = measuring;
+  elements.disconnectSwitchBtn.disabled = measuring;
+  elements.switchGrid.querySelectorAll("button").forEach((button) => {
+    button.disabled = measuring;
+  });
 
   if (status.user_info) {
     for (const [key, value] of Object.entries(status.user_info)) {

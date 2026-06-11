@@ -96,7 +96,8 @@ class WebAppSmokeTest(unittest.TestCase):
         try:
             self.assertEqual(page.status_code, 200)
             self.assertIn("N9918A SA/NA 控制台".encode("utf-8"), page.data)
-            self.assertIn("连接与配置说明".encode("utf-8"), page.data)
+            self.assertIn("公共连接与 Switch".encode("utf-8"), page.data)
+            self.assertIn("设备 IP".encode("utf-8"), page.data)
             self.assertIn("NA 天线测量".encode("utf-8"), page.data)
             self.assertIn("3dB / 10dB 双口径带宽".encode("utf-8"), page.data)
         finally:
@@ -238,9 +239,7 @@ class WebAppSmokeTest(unittest.TestCase):
         self.assertTrue(calibrated["ok"], calibrated)
         self.assertTrue(calibrated["data"]["status"]["calibration"]["complete"])
         steps = [event["switch_position"] for event in calibrated["data"]["status"]["calibration"]["events"]]
-        self.assertIn("B1D1", steps)
-        self.assertIn("B2D1", steps)
-        self.assertIn("B2D2", steps)
+        self.assertEqual(steps[:4], ["B2D1", "B1D1", "B1D1", "B2D2"])
 
         measure = self.client.post("/api/na/measure").get_json()
         self.assertTrue(measure["ok"], measure)
@@ -316,12 +315,11 @@ class BackendRegressionTest(unittest.TestCase):
         self.assertTrue(result["complete"])
         self.assertEqual(
             switch.calls,
-            [("B", 1), ("D", 1), ("B", 2), ("D", 1), ("B", 2), ("D", 2)],
+            [("B", 2), ("D", 1), ("B", 1), ("D", 1), ("B", 2), ("D", 2)],
         )
         commands = [command for _kind, command in device.commands]
         self.assertIn("CORR:COLL:METH:QCAL:CAL 1", commands)
-        self.assertIn("CORR:COLL:LOAD 1;*OPC?", commands)
-        self.assertIn("CORR:COLL:INT 1;*OPC?", commands)
+        self.assertLess(commands.index("CORR:COLL:INT 1;*OPC?"), commands.index("CORR:COLL:LOAD 1;*OPC?"))
         self.assertIn("CORR:COLL:SAVE 0", commands)
 
 

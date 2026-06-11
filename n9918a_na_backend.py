@@ -236,21 +236,21 @@ class N9918ANAController:
 
         try:
             self._check_stop(should_stop)
-            self._set_switch_position(switch_controller, "LOAD")
+            self._set_switch_position(switch_controller, "OPEN")
             self._write("CORR:COLL:METH:QCAL:CAL 1")
-            emit(CalibrationEvent("LOAD", "LOAD 校准", "B1D1", self.last_scpi, True, "已切到负载通道"))
+            emit(CalibrationEvent("OPEN", "OPEN 校准", "B2D1", self.last_scpi, True, "已切到开路通道"))
+            self._query("CORR:COLL:INT 1;*OPC?")
+            emit(CalibrationEvent("OPEN_DONE", "OPEN 校准完成", "B2D1", self.last_scpi, True, "QuickCal 内部开路/短路采集完成"))
+
+            self._check_stop(should_stop)
+            self._set_switch_position(switch_controller, "LOAD")
+            emit(CalibrationEvent("LOAD", "LOAD 校准", "B1D1", None, True, "已切到负载通道"))
             self._query("CORR:COLL:LOAD 1;*OPC?")
             emit(CalibrationEvent("LOAD_DONE", "LOAD 校准完成", "B1D1", self.last_scpi, True, "负载采集完成"))
 
             self._check_stop(should_stop)
-            self._set_switch_position(switch_controller, "OPEN")
-            emit(CalibrationEvent("OPEN", "OPEN 校准", "B2D1", None, True, "已切到开路通道"))
-            self._query("CORR:COLL:INT 1;*OPC?")
-            emit(CalibrationEvent("OPEN_DONE", "OPEN 校准完成", "B2D1", self.last_scpi, True, "QuickCal open-port 采集完成"))
-
-            self._check_stop(should_stop)
             self._write("CORR:COLL:SAVE 0")
-            emit(CalibrationEvent("SAVE", "保存校准", "B2D1", self.last_scpi, True, "校准参数已保存"))
+            emit(CalibrationEvent("SAVE", "保存校准", "B1D1", self.last_scpi, True, "校准参数已保存"))
             self._set_switch_position(switch_controller, "ANTENNA")
             emit(CalibrationEvent("ANTENNA", "切到天线测量", "B2D2", None, True, "已切到天线通道"))
         except N9918ANAError:
