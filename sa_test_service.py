@@ -20,6 +20,15 @@ from n9918a_backend import (
     save_peak_analysis,
     save_spectrum_data,
 )
+from n9918a_na_backend import (
+    NA_PRESET_CONFIGS,
+    N9918ANAController,
+    N9918ANAError,
+    build_na_result,
+    export_na_report,
+    frequency_axis,
+    save_na_measurement_data,
+)
 
 ROOT = Path(__file__).resolve().parent
 try:
@@ -40,12 +49,15 @@ class SATestService:
 
     def __init__(self, default_ip="192.168.20.233"):
         self.controller = N9918AController(ip_address=default_ip)
+        self.na_controller = N9918ANAController(ip_address=default_ip)
         self.switch_controller = MiniCircuitsSwitchController() if MiniCircuitsSwitchController else None
         self.lock = threading.RLock()
         self.stop_event = threading.Event()
         self.measurement_thread = None
         self.measurement_in_progress = False
         self.measurement_kind = None
+        self.current_mode = "SA"
+        self.switching_mode = False
         self.progress_message = "就绪"
         self.last_error = None
 
@@ -56,6 +68,11 @@ class SATestService:
         self.last_ai_result = ""
         self.last_report_path = None
         self.demo_mode = False
+        self.na_config_key = None
+        self.na_config = None
+        self.na_result = None
+        self.na_calibration = self._empty_na_calibration()
+        self.na_last_report_path = None
 
         self.user_info = {
             "customer": "M5Stack",
@@ -70,7 +87,12 @@ class SATestService:
             status = self.controller.get_current_status()
             status.update(
                 {
-                    "connected": self.controller.connected,
+                    "connected": self.controller.connected or self.na_controller.connected,
+                    "current_mode": self.current_mode,
+                    "switching_mode": self.switching_mode,
+                    "na_connected": self.na_controller.connected,
+                    "na_configured": bool(self.na_config),
+                    "na_calibrated": bool(self.na_calibration.get("complete")),
                     "measurement_in_progress": self.measurement_in_progress,
                     "measurement_kind": self.measurement_kind,
                     "progress_message": self.progress_message,
@@ -88,6 +110,95 @@ class SATestService:
     def presets(self):
         return self.controller.get_preset_configs()
 
+    @staticmethod
+    def _empty_na_calibration():
+        return {
+            "complete": False,
+            "in_progress": False,
+            "events": [],
+            "error": None,
+            "last_scpi": None,
+            "switch_position": None,
+        }
+
+    def mode_status(self):
+        with self.lock:
+            return {
+                "current_mode": self.current_mode,
+                "connected": self.controller.connected or self.na_controller.connected,
+                "switching": self.switching_mode,
+                "available_modes": [
+                    {"mode": "SA", "label": "SA 频谱测试"},
+                    {"mode": "NA", "label": "NA 天线测量"},
+                ],
+            }
+
+    def switch_mode(self, mode):
+        mode = str(mode or "").upper()
+        if mode not in {"SA", "NA"}:
+            raise ServiceError("模式只能是 SA 或 NA。")
+
+        with self.lock:
+            if self.measurement_in_progress:
+                raise ServiceError("已有测量或校准正在进行，不能切换模式。")
+            if self.current_mode == mode and not self.switching_mode:
+                return self.mode_status()
+            self.switching_mode = True
+            self.progress_message = f"正在切换到 {mode} 模式..."
+            self.last_error = None
+
+        try:
+            if not self.demo_mode and (self.controller.connected or self.na_controller.connected):
+                if mode == "NA":
+                    self._select_na_hardware_mode()
+                else:
+                    self._select_sa_hardware_mode()
+
+            with self.lock:
+                self.current_mode = mode
+                if mode == "NA":
+                    self._clear_sa_results_locked()
+                else:
+                    self._clear_na_results_locked()
+                self.progress_message = f"已切换到 {mode} 模式"
+        except Exception as exc:
+            with self.lock:
+                self.last_error = str(exc)
+                self.progress_message = "模式切换失败"
+            raise
+        finally:
+            with self.lock:
+                self.switching_mode = False
+        return self.mode_status()
+
+    def _select_na_hardware_mode(self):
+        self.na_controller.ip_address = self.controller.ip_address
+        if not self.na_controller.connected:
+            if not self.na_controller.connect():
+                raise ServiceError("无法连接 N9918A NA 控制器，模式切换失败。")
+        else:
+            self.na_controller.select_mode()
+
+    def _select_sa_hardware_mode(self):
+        if not self.controller.connected:
+            self.controller.ip_address = self.na_controller.ip_address or self.controller.ip_address
+            if not self.controller.connect():
+                raise ServiceError("无法连接 N9918A SA 控制器，模式切换失败。")
+            return
+        if self.controller.device:
+            self.controller.device.query("INST:SEL 'SA';*OPC?")
+
+    def _clear_sa_results_locked(self):
+        self.current_frequencies = None
+        self.current_amplitudes = None
+        self.current_peaks = None
+        self.emi_results = {}
+        self.last_ai_result = ""
+
+    def _clear_na_results_locked(self):
+        self.na_result = None
+        self.na_last_report_path = None
+
     def update_user_info(self, data):
         with self.lock:
             for key in self.user_info:
@@ -98,12 +209,14 @@ class SATestService:
     def connect_device(self, ip_address):
         with self.lock:
             self.controller.ip_address = ip_address.strip() or self.controller.ip_address
+            self.na_controller.ip_address = self.controller.ip_address
             self.progress_message = "正在连接仪器..."
             self.last_error = None
 
         ok = self.controller.connect()
         with self.lock:
             self.demo_mode = False
+            self.current_mode = "SA"
             self.progress_message = "仪器已连接" if ok else "仪器连接失败"
             if not ok:
                 self.last_error = "无法连接 N9918A"
@@ -114,12 +227,20 @@ class SATestService:
     def disconnect_device(self):
         with self.lock:
             self.controller.disconnect()
+            self.na_controller.disconnect()
             self.current_frequencies = None
             self.current_amplitudes = None
             self.current_peaks = None
             self.emi_results = {}
             self.last_ai_result = ""
             self.last_report_path = None
+            self.na_config_key = None
+            self.na_config = None
+            self.na_result = None
+            self.na_calibration = self._empty_na_calibration()
+            self.na_last_report_path = None
+            self.current_mode = "SA"
+            self.switching_mode = False
             self.progress_message = "仪器已断开"
             self.demo_mode = False
         return self.status()
@@ -153,6 +274,8 @@ class SATestService:
         }
 
     def set_switch_position(self, switch_name, position):
+        if self.measurement_in_progress and self.measurement_kind == "NA 自动校准":
+            raise ServiceError("NA 自动校准期间不能手动切换 switchbox。")
         if not self.switch_controller or not self.switch_controller.connected:
             raise ServiceError("切换器未连接。")
         self.switch_controller.set_switch(str(switch_name).upper(), int(position))
@@ -161,6 +284,8 @@ class SATestService:
     def configure(self, preset_key):
         if not self.controller.connected:
             raise ServiceError("请先连接 N9918A。")
+        if self.current_mode != "SA":
+            self.switch_mode("SA")
         with self.lock:
             self.progress_message = "正在配置仪器..."
             self.last_error = None
@@ -245,6 +370,8 @@ class SATestService:
         with self.lock:
             if self.measurement_in_progress:
                 raise ServiceError("已有测量正在进行，请先停止或等待完成。")
+            if self.current_mode != "SA":
+                raise ServiceError("当前不是 SA 模式，请先切换到 SA 频谱测试。")
             if not self.controller.connected:
                 raise ServiceError("请先连接 N9918A。")
             if not self.controller.current_config:
@@ -263,11 +390,13 @@ class SATestService:
         with self.lock:
             self.demo_mode = True
             self.controller.connected = True
+            self.current_mode = "SA"
             self._apply_preset_fields(preset_key)
             self.progress_message = "演示数据已加载"
             self.last_error = None
             self.measurement_in_progress = False
             self.measurement_kind = None
+            self.na_result = None
 
         results = self._generate_demo_results(duration_seconds)
         frequencies, amplitudes = results["QUASI_PEAK"]
@@ -437,6 +566,293 @@ class SATestService:
                 "demo": True,
             },
         }
+
+    def na_presets(self):
+        return self.na_controller.get_preset_configs()
+
+    def na_configure(self, preset_key, points=None, ifbw=None):
+        if preset_key not in NA_PRESET_CONFIGS:
+            raise ServiceError(f"未知 NA 天线预设: {preset_key}")
+        with self.lock:
+            if self.measurement_in_progress:
+                raise ServiceError("已有测量或校准正在进行，请先等待完成。")
+            self.progress_message = "正在配置 NA 天线测量..."
+            self.last_error = None
+
+        if self.demo_mode:
+            config = self._apply_na_preset_fields(preset_key, points=points, ifbw=ifbw)
+        else:
+            if not (self.controller.connected or self.na_controller.connected):
+                raise ServiceError("请先连接 N9918A。")
+            if self.current_mode != "NA":
+                self.switch_mode("NA")
+            try:
+                config = self.na_controller.configure_preset(preset_key, points=points, ifbw=ifbw)
+            except N9918ANAError as exc:
+                raise ServiceError(str(exc)) from exc
+
+        with self.lock:
+            self.current_mode = "NA"
+            self.na_config_key = preset_key
+            self.na_config = config
+            self.na_result = None
+            self.na_calibration = self._empty_na_calibration()
+            self.progress_message = "NA 配置完成"
+        return self.na_result_payload()
+
+    def _apply_na_preset_fields(self, preset_key, points=None, ifbw=None):
+        config = dict(NA_PRESET_CONFIGS[preset_key])
+        if points:
+            config["points"] = int(points)
+        if ifbw:
+            config["ifbw"] = float(ifbw)
+        self.na_controller.current_preset_key = preset_key
+        self.na_controller.current_config = config
+        self.na_controller.start_freq = config["start_freq"]
+        self.na_controller.stop_freq = config["stop_freq"]
+        self.na_controller.points = config["points"]
+        self.na_controller.ifbw = config["ifbw"]
+        return config
+
+    def na_calibrate(self):
+        with self.lock:
+            if self.measurement_in_progress:
+                raise ServiceError("已有测量或校准正在进行，请先等待完成。")
+            if self.current_mode != "NA":
+                raise ServiceError("请先切换到 NA 天线测量模式。")
+            if not self.na_config:
+                raise ServiceError("请先选择并应用 NA 天线预设。")
+            self.stop_event.clear()
+            self.measurement_in_progress = True
+            self.measurement_kind = "NA 自动校准"
+            self.na_calibration = self._empty_na_calibration()
+            self.na_calibration["in_progress"] = True
+            self.progress_message = "NA 自动校准运行中"
+            self.last_error = None
+
+        if self.demo_mode:
+            try:
+                time.sleep(0.1)
+                events = [
+                    {"step": "LOAD", "label": "LOAD 校准", "switch_position": "B1D1", "scpi": "CORR:COLL:LOAD 1;*OPC?", "ok": True, "message": "演示"},
+                    {"step": "OPEN", "label": "OPEN 校准", "switch_position": "B2D1", "scpi": "CORR:COLL:INT 1;*OPC?", "ok": True, "message": "演示"},
+                    {"step": "SAVE", "label": "保存校准", "switch_position": "B2D1", "scpi": "CORR:COLL:SAVE 0", "ok": True, "message": "演示"},
+                    {"step": "ANTENNA", "label": "切到天线测量", "switch_position": "B2D2", "scpi": None, "ok": True, "message": "演示"},
+                ]
+                with self.lock:
+                    self.na_calibration = {
+                        "complete": True,
+                        "in_progress": False,
+                        "events": events,
+                        "error": None,
+                        "last_scpi": "CORR:COLL:SAVE 0",
+                        "switch_position": "B2D2",
+                    }
+                    self.progress_message = "NA 演示校准完成"
+            finally:
+                with self.lock:
+                    self.measurement_in_progress = False
+                    self.measurement_kind = None
+            return self.na_result_payload()
+
+        if not (self.na_controller.connected and self.na_controller.device):
+            with self.lock:
+                self.measurement_in_progress = False
+                self.measurement_kind = None
+                self.na_calibration["in_progress"] = False
+            raise ServiceError("请先连接 N9918A 并切换到 NA 模式。")
+        if not self.switch_controller or not self.switch_controller.connected:
+            with self.lock:
+                self.measurement_in_progress = False
+                self.measurement_kind = None
+                self.na_calibration["in_progress"] = False
+            raise ServiceError("NA 校准需要 N9918A 和 switchbox 都已连接。")
+
+        def record_progress(event):
+            with self.lock:
+                self.na_calibration["events"].append(event)
+                self.na_calibration["last_scpi"] = event.get("scpi")
+                self.na_calibration["switch_position"] = event.get("switch_position")
+                self.progress_message = event.get("label") or "NA 自动校准运行中"
+
+        try:
+            result = self.na_controller.perform_calibration(
+                self.switch_controller,
+                progress_callback=record_progress,
+                should_stop=self.stop_event.is_set,
+            )
+            with self.lock:
+                self.na_calibration.update(result)
+                self.na_calibration["complete"] = True
+                self.na_calibration["in_progress"] = False
+                self.na_calibration["error"] = None
+                self.progress_message = "NA 自动校准完成"
+        except N9918ANAError as exc:
+            with self.lock:
+                self.na_calibration["complete"] = False
+                self.na_calibration["in_progress"] = False
+                self.na_calibration["error"] = exc.as_dict()
+                self.last_error = str(exc)
+                self.progress_message = "NA 自动校准失败"
+            raise ServiceError(f"NA 自动校准失败: {exc}") from exc
+        finally:
+            with self.lock:
+                self.measurement_in_progress = False
+                self.measurement_kind = None
+        return self.na_result_payload()
+
+    def start_na_measurement(self):
+        with self.lock:
+            if self.measurement_in_progress:
+                raise ServiceError("已有测量或校准正在进行，请先停止或等待完成。")
+            if self.current_mode != "NA":
+                raise ServiceError("请先切换到 NA 天线测量模式。")
+            if not self.na_config:
+                raise ServiceError("请先选择并应用 NA 天线预设。")
+            if not self.na_calibration.get("complete"):
+                raise ServiceError("请先完成 NA 自动校准。")
+            if not self.demo_mode and not self.na_controller.connected:
+                raise ServiceError("请先连接 N9918A。")
+
+            self.stop_event.clear()
+            self.measurement_in_progress = True
+            self.measurement_kind = "NA 天线测量"
+            self.progress_message = "NA 天线测量运行中"
+            self.last_error = None
+            self.measurement_thread = threading.Thread(target=self._run_na_measurement, daemon=True)
+            self.measurement_thread.start()
+        return self.na_result_payload()
+
+    def _run_na_measurement(self):
+        try:
+            if self.demo_mode:
+                time.sleep(0.25)
+                result = self._generate_na_demo_result()
+            else:
+                result = self.na_controller.measure_s11(should_stop=self.stop_event.is_set)
+            with self.lock:
+                self.na_result = result
+                self.progress_message = "NA 天线测量完成"
+        except Exception as exc:
+            with self.lock:
+                self.last_error = str(exc)
+                self.progress_message = "NA 天线测量失败"
+        finally:
+            with self.lock:
+                self.measurement_in_progress = False
+                self.measurement_kind = None
+
+    def _generate_na_demo_result(self):
+        config = dict(self.na_config or NA_PRESET_CONFIGS["ANT_433"])
+        points = int(config.get("points") or 2001)
+        if config.get("full_sweep"):
+            points = min(points, 5001)
+        frequencies = frequency_axis(config["start_freq"], config["stop_freq"], points)
+        s11_db = []
+        centers = self._demo_na_centers(config)
+        for freq in frequencies:
+            mhz = freq / 1e6
+            baseline = -2.2 + 0.8 * math.sin(math.log10(max(mhz, 0.001)) * 3.1)
+            value = baseline
+            for center_mhz, depth_db, width_mhz in centers:
+                value -= depth_db * math.exp(-((mhz - center_mhz) ** 2) / (2 * width_mhz ** 2))
+            s11_db.append(round(value, 4))
+
+        real = []
+        imag = []
+        span = max(frequencies[-1] - frequencies[0], 1)
+        for freq, db in zip(frequencies, s11_db):
+            mag = min(0.98, max(0.02, 10 ** (db / 20)))
+            phase = -math.pi + 2 * math.pi * ((freq - frequencies[0]) / span)
+            real.append(mag * math.cos(phase))
+            imag.append(mag * math.sin(phase))
+
+        return build_na_result(frequencies, s11_db, real, imag, config, self.na_config_key)
+
+    @staticmethod
+    def _demo_na_centers(config):
+        label = config.get("label", "")
+        if config.get("full_sweep"):
+            return [
+                (433.0, 18, 8.5),
+                (898.0, 16, 10.0),
+                (915.0, 19, 8.0),
+                (2450.0, 22, 30.0),
+                (5200.0, 15, 55.0),
+            ]
+        if "433" in label:
+            return [(433.0, 23, 10.0), (470.0, 7, 5.5)]
+        if "898" in label:
+            return [(898.0, 21, 9.5), (930.0, 8, 6.0)]
+        if "915" in label:
+            return [(915.0, 24, 8.0), (880.0, 7, 6.0)]
+        if "2450" in label:
+            return [(2450.0, 25, 28.0), (2412.0, 9, 12.0)]
+        if "5G" in label or "5GHz" in label:
+            return [(5200.0, 20, 60.0), (5750.0, 16, 45.0)]
+        center = (config["start_freq"] + config["stop_freq"]) / 2 / 1e6
+        return [(center, 20, max((config["stop_freq"] - config["start_freq"]) / 1e6 / 30, 1.0))]
+
+    def stop_na_measurement(self):
+        self.stop_event.set()
+        if self.na_controller.connected and self.na_controller.device:
+            try:
+                self.na_controller.device.write("INIT:CONT 0")
+            except Exception as exc:
+                with self.lock:
+                    self.last_error = str(exc)
+        with self.lock:
+            self.progress_message = "已请求停止 NA 测量/校准"
+        return self.na_result_payload()
+
+    def na_result_payload(self):
+        with self.lock:
+            result = self.na_result or {}
+            status = {
+                "current_mode": self.current_mode,
+                "connected": self.controller.connected or self.na_controller.connected,
+                "configured": bool(self.na_config),
+                "config": self.na_config,
+                "preset_key": self.na_config_key,
+                "calibration": self.na_calibration.copy(),
+                "switch_position": self.na_calibration.get("switch_position"),
+                "measurement_in_progress": self.measurement_in_progress,
+                "measurement_kind": self.measurement_kind,
+                "progress_message": self.progress_message,
+                "error": self.last_error,
+                "last_report": str(self.na_last_report_path) if self.na_last_report_path else None,
+                "demo_mode": self.demo_mode,
+            }
+            return {
+                "status": status,
+                "series": result.get("series"),
+                "smith": result.get("smith"),
+                "primary_valley": result.get("primary_valley"),
+                "bandwidths": result.get("bandwidths") or {},
+                "valleys": result.get("valleys") or [],
+                "config": result.get("config") or self.na_config,
+                "is_full_sweep": bool(result.get("is_full_sweep") or (self.na_config or {}).get("full_sweep")),
+            }
+
+    def save_na_data(self):
+        with self.lock:
+            result = self.na_result
+        if not result:
+            raise ServiceError("没有可保存的 NA 测量数据。")
+        return save_na_measurement_data(result)
+
+    def export_na_report(self, user_info=None):
+        with self.lock:
+            if user_info:
+                self.update_user_info(user_info)
+            result = self.na_result
+            project_info = self.user_info.copy()
+        if not result:
+            raise ServiceError("没有可导出的 NA 测量结果。")
+        report_path = export_na_report(result, user_info=project_info)
+        with self.lock:
+            self.na_last_report_path = report_path
+        return report_path
 
     def stop_measurement(self):
         self.stop_event.set()

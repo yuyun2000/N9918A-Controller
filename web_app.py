@@ -115,9 +115,74 @@ def api_status():
     return ok(service.status())
 
 
+@app.get("/api/mode")
+def api_mode_get():
+    return ok(service.mode_status())
+
+
+@app.post("/api/mode")
+def api_mode_post():
+    data = request.get_json(silent=True) or {}
+    return ok(service.switch_mode(data.get("mode")))
+
+
 @app.get("/api/presets")
 def api_presets():
     return ok(service.presets())
+
+
+@app.get("/api/na/presets")
+def api_na_presets():
+    return ok(service.na_presets())
+
+
+@app.post("/api/na/configure")
+def api_na_configure():
+    data = request.get_json(silent=True) or {}
+    return ok(
+        service.na_configure(
+            data.get("preset_key", ""),
+            points=data.get("points"),
+            ifbw=data.get("ifbw"),
+        )
+    )
+
+
+@app.post("/api/na/calibrate")
+def api_na_calibrate():
+    return ok(service.na_calibrate())
+
+
+@app.post("/api/na/measure")
+def api_na_measure():
+    return ok(service.start_na_measurement())
+
+
+@app.post("/api/na/stop")
+def api_na_stop():
+    return ok(service.stop_na_measurement())
+
+
+@app.get("/api/na/result")
+def api_na_result():
+    return ok(service.na_result_payload())
+
+
+@app.post("/api/na/data/save")
+def api_na_data_save():
+    return ok({"files": service.save_na_data()})
+
+
+@app.post("/api/na/report/export")
+def api_na_report_export():
+    data = request.get_json(silent=True) or {}
+    report_path = service.export_na_report(data.get("user_info"))
+    return ok(
+        {
+            "file": str(report_path),
+            "download_url": f"/api/report/download/{report_path.name}",
+        }
+    )
 
 
 @app.get("/api/diagnostics")

@@ -13,14 +13,15 @@
 
 ## 项目背景
 
-本仓库是 Windows 上运行的 N9918A-Controller，用 Web 控制台承载当前已实现的 EMC/SA 测试流程，控制 N9918A FieldFox/频谱分析仪、Mini-Circuits USB RF Switch，并支持频谱数据处理、AI 异常分析和 PDF 报告导出。项目范围以 Web 前端可见、可操作的流程为准。
+本仓库是 Windows 上运行的 N9918A-Controller，用 Web 控制台承载 SA 频谱/EMI 测试和 NA 天线 S11 测量流程，控制 N9918A FieldFox、Mini-Circuits USB RF Switch，并支持频谱/天线数据处理、AI 异常分析和报告导出。项目范围以 Web 前端可见、可操作的流程为准。
 
 关键文件：
 
 - `web_app.py`: Flask API 和静态 Web 前端入口，默认监听 `127.0.0.1:5000`。
-- `web_frontend/`: Web 控制台 HTML/CSS/JS，覆盖连接、配置、测量、峰值、AI 和 PDF 操作。
-- `sa_test_service.py`: Web API 使用的 SA 测试流程服务层，封装状态、线程、结果、AI 和报告。
+- `web_frontend/`: Web 控制台 HTML/CSS/JS，覆盖 SA/NA 模式入口、连接、配置、测量、校准、图表、峰值/谷值、AI 和报告操作。
+- `sa_test_service.py`: Web API 使用的模式协调服务层，封装 SA/NA 状态、线程、结果、AI 和报告。
 - `n9918a_backend.py`: SA/EMC 后端控制逻辑，使用 PyVISA/SCPI 配置仪器、采样、峰值搜索和数据保存。
+- `n9918a_na_backend.py`: NA/S11 后端控制逻辑，使用 PyVISA/SCPI 配置 NA、执行 QuickCal、读取 `FDATa?`/`SDATA?`、计算谷值/带宽/Smith 数据。
 - `Switch.py`: Mini-Circuits 切换器封装，通过 `pythonnet` 加载 `mcl_RF_Switch_Controller64.dll`。
 - `chat.py`: AI 分析封装，使用 Volcengine Ark/OpenAI 兼容接口；密钥应来自环境变量。
 - `utils/create_pdf.py`: ReportLab PDF 报告生成，依赖仓库字体或 Windows 中文字体。
@@ -46,12 +47,15 @@
 - 生成的测试图、PDF、日志、缓存文件一般视为运行产物；除非任务要求，不要扩大提交范围到新的产物文件。
 - 未在 Web 控制台、服务层或文档中引用的历史测试脚本、截图和临时入口默认视为可清理对象；清理前用 `rg` 确认没有引用。
 - 仪器默认 IP、VISA resource 字符串、SCPI 模式切换和频段参数属于硬件行为配置，修改时要说明兼容影响。
+- 不要复活旧的 `NA-mode/` 历史代码；NA 功能以 `n9918a_na_backend.py`、`sa_test_service.py` 和 Web API 中的当前实现为准。
+- NA 预设、点数、IFBW、switchbox 位置和校准顺序属于硬件流程配置；修改前要对照 `doc/N9918A编程说明.pdf` 与用户确认的夹具路径。
 
 ## 硬件与安全边界
 
 - 连接 N9918A、切换 RF Switch、执行测量、长时间采样、导出报告或调用外部 AI 服务，都可能改变设备状态或暴露数据；用户未明确要求时不要主动执行。
 - 任何会改变仪器状态的命令必须先说明风险；涉及开关切换、长测、外部发送客户数据时，等待用户确认。
 - `Switch.py` 的开关位置语义是 Mini-Circuits DLL 的 0/1 映射到位置 1/2；修改时必须确认 A/B/C/D 的物理链路含义。
+- NA 校准固定顺序是 LOAD=`B1D1`、OPEN=`B2D1`、ANTENNA=`B2D2`；OPEN 前端显示为 OPEN 校准，SCPI 当前使用 QuickCal `CORR:COLL:INT 1;*OPC?`。
 - SCPI 调试先做只读查询或短流程复现，例如 `*IDN?`、资源枚举、当前配置查询；避免直接上来改模式或触发扫描。
 - 对超时、断连、VISA IO 错误、DLL 加载失败、RF Switch 未连接等情况，要保留清晰错误提示和降级路径。
 
@@ -61,11 +65,13 @@
 - 耗时的连接、配置、测量、AI 分析、PDF 生成使用后台线程或服务层方法，避免阻塞 Web 请求。
 - 测量过程中要正确禁用/恢复按钮，避免重复点击导致并发测量或仪器状态错乱。
 - 新增状态字段时要检查失败、异常、取消和 finally 路径，确保 `measurement_in_progress` 和按钮状态可恢复。
+- SA/NA 共用测量互斥状态，同一时间只允许一个模式执行测量或校准；校准期间必须禁用模式切换、测量和手动 switchbox 切换。
 - 连接、配置、测量、AI 分析和导出 PDF 的错误提示要区分用户可处理问题与程序异常，避免只显示泛化失败。
 
 ## 数据、AI 与报告规则
 
 - EMC 数据处理要保留频率、幅度、限值、Margin、Status 等字段语义，不要把单位或符号方向改错。
+- NA 数据处理要同时保留 S11 dB、复数 Gamma、中心谷、所有候选谷、绝对阈值带宽和相对谷值带宽；全扫宽不显示 Smith Chart。
 - AI 分析只应围绕异常点、Fail 点和临界 Margin 点展开；不要输出与异常无关的泛泛说明。
 - PDF 报告生成要验证中文字体、logo、频谱图路径、项目信息、数据表和总结文本是否存在。
 - 保存 CSV、PDF 或图像时要避免覆盖用户重要文件；如需覆盖，先提示文件路径和风险。
@@ -102,7 +108,7 @@ python -c "from pathlib import Path; text=Path('AGENTS.md').read_text(encoding='
 修改 Python 代码后优先跑语法检查：
 
 ```powershell
-python -m py_compile n9918a_backend.py sa_test_service.py web_app.py Switch.py chat.py utils/create_pdf.py tests/test_web_app.py
+python -m py_compile n9918a_backend.py n9918a_na_backend.py sa_test_service.py web_app.py Switch.py chat.py utils/create_pdf.py tests/test_web_app.py
 ```
 
 启动 GUI 做人工验证时：
@@ -133,6 +139,12 @@ python -c "from web_app import app; c=app.test_client(); r=c.post('/api/demo/loa
 
 ```powershell
 python -m unittest tests.test_web_app
+```
+
+前端语法检查：
+
+```powershell
+node --check web_frontend/app.js
 ```
 
 ## 输出标准

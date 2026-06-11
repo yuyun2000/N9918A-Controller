@@ -98,11 +98,11 @@ class N9918AController:
             self.device.timeout = self.timeout
             
             self.device.write("*CLS")
-            device_id = self.device.query("*IDN[WARN]")
+            device_id = self.device.query("*IDN?")
             print(f"Connected to: {device_id}")
             
-            # 官方示例使用 *OPC[WARN] 等待模式切换完成，避免后续配置命令跑在旧模式下。
-            self.device.query("INST:SEL 'SA';*OPC[WARN]")
+            # 官方示例使用 *OPC? 等待模式切换完成，避免后续配置命令跑在旧模式下。
+            self.device.query("INST:SEL 'SA';*OPC?")
             
             self.connected = True
             print("Successfully connected to N9918A")
@@ -214,11 +214,11 @@ class N9918AController:
         try:
             # 触发单次扫描
             try:
-                self.device.query(":INIT:IMM;*OPC[WARN]")
+                self.device.query(":INIT:IMM;*OPC?")
             except Exception:
                 self.device.write(":INIT:IMM")
                 try:
-                    sweep_time = float(self.device.query(":SENS:SWE:TIME[WARN]"))
+                    sweep_time = float(self.device.query(":SENS:SWE:TIME?"))
                     wait_time = max(sweep_time * 1.2, 1.0)  # 等待1.2倍扫描时间或至少1秒
                 except Exception:
                     wait_time = max(2.0, (self.stop_freq - self.start_freq) / 1e9 * 3)
@@ -226,7 +226,7 @@ class N9918AController:
                 time.sleep(wait_time)
             
             # Read trace data
-            self.device.write(":TRAC:DATA[WARN]")
+            self.device.write(":TRAC:DATA?")
             trace_data = self.device.read()
             amplitudes_dBuv = [float(x) for x in trace_data.split(",")]
             
@@ -428,7 +428,7 @@ class N9918AController:
                         
                         # 读取当前trace数据
                         sample_start_time = time.time()
-                        self.device.write(":TRACE:DATA[WARN]")
+                        self.device.write(":TRACE:DATA?")
                         trace_data = self.device.read()
                         
                         # 检查读取是否超时

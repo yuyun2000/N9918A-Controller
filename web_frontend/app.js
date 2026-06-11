@@ -1,8 +1,14 @@
 const state = {
   presets: {},
+  naPresets: {},
   result: null,
+  naResult: null,
   busy: false,
   wasMeasuring: false,
+  mode: "SA",
+  valleyPage: 1,
+  valleysPerPage: 12,
+  lastStatus: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -11,6 +17,11 @@ const elements = {
   statusDot: $("statusDot"),
   statusTitle: $("statusTitle"),
   statusDetail: $("statusDetail"),
+  modeSA: $("modeSA"),
+  modeNA: $("modeNA"),
+  modeHint: $("modeHint"),
+  saWorkspace: $("saWorkspace"),
+  naWorkspace: $("naWorkspace"),
   deviceIp: $("deviceIp"),
   presetSelect: $("presetSelect"),
   connectBtn: $("connectBtn"),
@@ -45,13 +56,34 @@ const elements = {
   model: $("model"),
   engineer: $("engineer"),
   remark: $("remark"),
+  naPresetSelect: $("naPresetSelect"),
+  naConfigureBtn: $("naConfigureBtn"),
+  naCalibrateBtn: $("naCalibrateBtn"),
+  naMeasureBtn: $("naMeasureBtn"),
+  naStopBtn: $("naStopBtn"),
+  naCalibrationLog: $("naCalibrationLog"),
+  naConfigText: $("naConfigText"),
+  naCalibrationText: $("naCalibrationText"),
+  naSwitchText: $("naSwitchText"),
+  naStatusText: $("naStatusText"),
+  naDownloadSlot: $("naDownloadSlot"),
+  naSaveBtn: $("naSaveBtn"),
+  naExportBtn: $("naExportBtn"),
+  naS11Canvas: $("naS11Canvas"),
+  smithCanvas: $("smithCanvas"),
+  naPrimaryText: $("naPrimaryText"),
+  bandwidthGrid: $("bandwidthGrid"),
+  valleyRows: $("valleyRows"),
+  valleyPrevBtn: $("valleyPrevBtn"),
+  valleyNextBtn: $("valleyNextBtn"),
+  valleyPageInfo: $("valleyPageInfo"),
 };
 
 function logEvent(message) {
   const li = document.createElement("li");
   li.textContent = `${new Date().toLocaleTimeString()} ${message}`;
   elements.eventLog.prepend(li);
-  while (elements.eventLog.children.length > 80) {
+  while (elements.eventLog.children.length > 100) {
     elements.eventLog.lastElementChild.remove();
   }
 }
@@ -89,13 +121,48 @@ function userInfoPayload() {
   };
 }
 
+function setModeUi(mode) {
+  state.mode = mode;
+  elements.modeSA.classList.toggle("active", mode === "SA");
+  elements.modeNA.classList.toggle("active", mode === "NA");
+  elements.saWorkspace.hidden = mode !== "SA";
+  elements.naWorkspace.hidden = mode !== "NA";
+  elements.saWorkspace.classList.toggle("active", mode === "SA");
+  elements.naWorkspace.classList.toggle("active", mode === "NA");
+  elements.modeHint.textContent = mode === "NA"
+    ? "NA 模式会调用 FieldFox 网络分析功能；校准会自动执行 LOAD → OPEN → ANTENNA 的 switchbox 顺序。"
+    : "SA 模式保留原有频谱扫描、EMI 采样、AI 分析和 PDF 报告流程。";
+  if (mode === "SA") {
+    renderChart(state.result?.series, state.result?.peaks || []);
+  } else {
+    renderNaS11(state.naResult?.series, state.naResult?.primary_valley, state.naResult?.bandwidths);
+    renderSmith(state.naResult?.smith, state.naResult?.is_full_sweep);
+  }
+}
+
+async function switchMode(mode) {
+  await runAction(`切换到 ${mode} 模式`, async () => {
+    const data = await post("/api/mode", { mode });
+    setModeUi(data.current_mode || mode);
+    await refreshStatus();
+    if ((data.current_mode || mode) === "NA") {
+      await refreshNaResult();
+    } else {
+      await refreshResult();
+    }
+  });
+}
+
 function updateStatus(status) {
+  state.lastStatus = status;
   const connected = Boolean(status.connected);
   const measuring = Boolean(status.measurement_in_progress);
   state.wasMeasuring = state.wasMeasuring || measuring;
+  setModeUi(status.current_mode || state.mode);
+
   elements.statusDot.classList.toggle("connected", connected && !measuring);
-  elements.statusDot.classList.toggle("busy", measuring);
-  elements.statusTitle.textContent = measuring ? "测量中" : connected ? "已连接" : "就绪";
+  elements.statusDot.classList.toggle("busy", measuring || status.switching_mode);
+  elements.statusTitle.textContent = measuring ? "测量/校准中" : connected ? "已连接" : "就绪";
   const demoSuffix = status.demo_mode ? " · 演示数据" : "";
   elements.statusDetail.textContent = `${status.progress_message || status.last_error || "等待连接仪器"}${demoSuffix}`;
 
@@ -108,15 +175,17 @@ function updateStatus(status) {
 
   elements.connectBtn.disabled = connected || measuring;
   elements.disconnectBtn.disabled = !connected || measuring;
-  elements.configureBtn.disabled = !connected || measuring;
-  elements.singleBtn.disabled = !connected || !status.current_config || measuring;
-  elements.slowBtn.disabled = !connected || !status.current_config || measuring;
-  elements.fastBtn.disabled = !connected || !status.current_config || measuring;
+  elements.configureBtn.disabled = !connected || measuring || state.mode !== "SA";
+  elements.singleBtn.disabled = !connected || !status.current_config || measuring || state.mode !== "SA";
+  elements.slowBtn.disabled = !connected || !status.current_config || measuring || state.mode !== "SA";
+  elements.fastBtn.disabled = !connected || !status.current_config || measuring || state.mode !== "SA";
   elements.stopBtn.disabled = !measuring;
   elements.saveBtn.disabled = measuring || (!status.has_single_data && !status.has_emi_data);
   elements.analyzeBtn.disabled = measuring || (!status.has_single_data && !status.has_emi_data);
   elements.pdfBtn.disabled = measuring || !status.has_emi_data;
   elements.demoBtn.disabled = measuring;
+  elements.modeSA.disabled = measuring || status.switching_mode;
+  elements.modeNA.disabled = measuring || status.switching_mode;
 
   if (status.user_info) {
     for (const [key, value] of Object.entries(status.user_info)) {
@@ -135,6 +204,17 @@ function populatePresets(presets) {
     option.value = key;
     option.textContent = `${config.name} · ${config.description}`;
     elements.presetSelect.append(option);
+  }
+}
+
+function populateNaPresets(presets) {
+  state.naPresets = presets;
+  elements.naPresetSelect.innerHTML = "";
+  for (const [key, config] of Object.entries(presets)) {
+    const option = document.createElement("option");
+    option.value = key;
+    option.textContent = `${config.name} · ${formatHz(config.start_freq)}-${formatHz(config.stop_freq)} · ${config.description}`;
+    elements.naPresetSelect.append(option);
   }
 }
 
@@ -205,23 +285,22 @@ function ceLimit(freqHz) {
   return 54;
 }
 
-function renderChart(series, peaks = []) {
-  const canvas = elements.canvas;
+function prepareCanvas(canvas, minWidth = 900, minHeight = 420) {
   const ctx = canvas.getContext("2d");
   const rect = canvas.getBoundingClientRect();
   const scale = window.devicePixelRatio || 1;
-  canvas.width = Math.max(900, Math.floor(rect.width * scale));
-  canvas.height = Math.max(420, Math.floor(rect.height * scale));
+  canvas.width = Math.max(minWidth, Math.floor(rect.width * scale));
+  canvas.height = Math.max(minHeight, Math.floor(rect.height * scale));
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  return { ctx, width: canvas.width / scale, height: canvas.height / scale };
+}
 
-  const width = canvas.width / scale;
-  const height = canvas.height / scale;
+function renderChart(series, peaks = []) {
+  const { ctx, width, height } = prepareCanvas(elements.canvas);
   ctx.clearRect(0, 0, width, height);
 
   if (!series || !series.frequency_mhz?.length) {
-    ctx.fillStyle = "#60717a";
-    ctx.font = "18px Bahnschrift, sans-serif";
-    ctx.fillText("等待测量数据...", 36, 52);
+    drawEmpty(ctx, "等待 SA 测量数据...", width, height);
     return;
   }
 
@@ -232,42 +311,12 @@ function renderChart(series, peaks = []) {
   const minY = Math.min(10, Math.min(...yVals) - 8);
   const maxY = Math.max(80, Math.max(...yVals) + 8);
   const pad = { left: 68, right: 22, top: 28, bottom: 50 };
-  const plotW = width - pad.left - pad.right;
-  const plotH = height - pad.top - pad.bottom;
-  const logMin = Math.log10(Math.max(minX, 0.001));
-  const logMax = Math.log10(Math.max(maxX, minX + 1));
-  const x = (mhz) => pad.left + ((Math.log10(Math.max(mhz, 0.001)) - logMin) / (logMax - logMin)) * plotW;
-  const y = (dbuv) => pad.top + (1 - (dbuv - minY) / (maxY - minY)) * plotH;
+  const { x, y } = scaledPlotters(minX, maxX, minY, maxY, width, height, pad, true);
 
-  ctx.strokeStyle = "rgba(31, 57, 63, .14)";
-  ctx.lineWidth = 1;
-  for (let i = 0; i <= 8; i++) {
-    const gy = pad.top + (plotH / 8) * i;
-    ctx.beginPath();
-    ctx.moveTo(pad.left, gy);
-    ctx.lineTo(width - pad.right, gy);
-    ctx.stroke();
-  }
-
-  const drawLine = (values, color, dash = []) => {
-    ctx.save();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2;
-    ctx.setLineDash(dash);
-    ctx.beginPath();
-    values.forEach((value, i) => {
-      const px = x(xVals[i]);
-      const py = y(value);
-      if (i === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
-    });
-    ctx.stroke();
-    ctx.restore();
-  };
-
-  drawLine(yVals, "#0a6a72");
-  drawLine(xVals.map((mhz) => fccLimit(mhz * 1e6)), "#b7442e", [8, 6]);
-  drawLine(xVals.map((mhz) => ceLimit(mhz * 1e6)), "#23744a", [4, 5]);
+  drawGrid(ctx, width, height, pad);
+  drawLine(ctx, xVals, yVals, x, y, "#0a6a72", 2.2);
+  drawLine(ctx, xVals, xVals.map((mhz) => fccLimit(mhz * 1e6)), x, y, "#b7442e", 1.6, [8, 6]);
+  drawLine(ctx, xVals, xVals.map((mhz) => ceLimit(mhz * 1e6)), x, y, "#23744a", 1.6, [4, 5]);
 
   for (const peak of peaks.slice(0, 28)) {
     const px = x(peak.frequency_mhz);
@@ -279,15 +328,210 @@ function renderChart(series, peaks = []) {
     ctx.fill();
   }
 
-  ctx.fillStyle = "#60717a";
-  ctx.font = "12px Cascadia Code, monospace";
-  ctx.fillText(`${minX.toFixed(3)} MHz`, pad.left, height - 18);
-  ctx.fillText(`${maxX.toFixed(3)} MHz`, width - pad.right - 112, height - 18);
-  ctx.save();
-  ctx.translate(20, height / 2);
-  ctx.rotate(-Math.PI / 2);
-  ctx.fillText("幅度 dBμV", 0, 0);
-  ctx.restore();
+  drawAxisLabels(ctx, width, height, pad, `${minX.toFixed(3)} MHz`, `${maxX.toFixed(3)} MHz`, "幅度 dBμV");
+}
+
+function renderNaS11(series, primaryValley, bandwidths = {}) {
+  const { ctx, width, height } = prepareCanvas(elements.naS11Canvas);
+  ctx.clearRect(0, 0, width, height);
+
+  if (!series || !series.frequency_mhz?.length) {
+    drawEmpty(ctx, "等待 NA S11 测量数据...", width, height);
+    return;
+  }
+
+  const xVals = series.frequency_mhz;
+  const yVals = series.s11_db;
+  const minX = Math.min(...xVals);
+  const maxX = Math.max(...xVals);
+  const minY = Math.min(-35, Math.min(...yVals) - 4);
+  const maxY = Math.max(2, Math.max(...yVals) + 3);
+  const pad = { left: 70, right: 26, top: 30, bottom: 52 };
+  const useLog = maxX / Math.max(minX, 0.001) > 4;
+  const { x, y } = scaledPlotters(minX, maxX, minY, maxY, width, height, pad, useLog);
+
+  for (const [key, bw] of Object.entries(bandwidths || {})) {
+    if (!bw?.left_hz || !bw?.right_hz) continue;
+    const color = key.includes("10") ? "rgba(183, 68, 46, 0.16)" : "rgba(217, 130, 43, 0.14)";
+    ctx.fillStyle = color;
+    const left = x(bw.left_hz / 1e6);
+    const right = x(bw.right_hz / 1e6);
+    ctx.fillRect(Math.min(left, right), pad.top, Math.abs(right - left), height - pad.top - pad.bottom);
+  }
+
+  drawGrid(ctx, width, height, pad);
+  drawLine(ctx, xVals, yVals, x, y, "#0a6a72", 2.4);
+
+  const thresholds = [
+    { value: -3, color: "#d9822b", dash: [8, 6], label: "-3dB" },
+    { value: -10, color: "#b7442e", dash: [4, 5], label: "-10dB" },
+  ];
+  for (const item of thresholds) {
+    drawHorizontal(ctx, y(item.value), pad.left, width - pad.right, item.color, item.dash);
+    ctx.fillStyle = item.color;
+    ctx.font = "12px Cascadia Code, monospace";
+    ctx.fillText(item.label, width - pad.right - 50, y(item.value) - 6);
+  }
+
+  if (primaryValley) {
+    const px = x(primaryValley.frequency_mhz);
+    const py = y(primaryValley.s11_db);
+    ctx.fillStyle = "#d9822b";
+    ctx.beginPath();
+    ctx.arc(px, py, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#172026";
+    ctx.font = "13px Bahnschrift, sans-serif";
+    ctx.fillText(`${primaryValley.frequency_mhz.toFixed(3)} MHz / ${primaryValley.s11_db.toFixed(2)} dB`, px + 10, py - 8);
+  }
+
+  drawAxisLabels(ctx, width, height, pad, `${minX.toFixed(3)} MHz`, `${maxX.toFixed(3)} MHz`, "S11 dB");
+}
+
+function renderSmith(smith, isFullSweep) {
+  const { ctx, width, height } = prepareCanvas(elements.smithCanvas, 520, 420);
+  ctx.clearRect(0, 0, width, height);
+  const size = Math.min(width, height) * 0.78;
+  const cx = width / 2;
+  const cy = height / 2;
+  const r = size / 2;
+
+  ctx.fillStyle = "rgba(255, 255, 255, 0.62)";
+  ctx.fillRect(0, 0, width, height);
+  ctx.strokeStyle = "rgba(31,57,63,.18)";
+  ctx.lineWidth = 1;
+  for (const fraction of [0.25, 0.5, 0.75, 1]) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * fraction, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.moveTo(cx - r, cy);
+  ctx.lineTo(cx + r, cy);
+  ctx.moveTo(cx, cy - r);
+  ctx.lineTo(cx, cy + r);
+  ctx.stroke();
+
+  if (isFullSweep) {
+    drawCentered(ctx, "全扫宽结果不显示 Smith Chart", width, height);
+    return;
+  }
+  if (!smith || !smith.real?.length) {
+    drawCentered(ctx, "等待复数 Gamma 数据...", width, height);
+    return;
+  }
+
+  const toX = (value) => cx + value * r;
+  const toY = (value) => cy - value * r;
+  ctx.strokeStyle = "#0a6a72";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  smith.real.forEach((real, index) => {
+    const px = toX(Math.max(-1.1, Math.min(1.1, real)));
+    const py = toY(Math.max(-1.1, Math.min(1.1, smith.imag[index])));
+    if (index === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  });
+  ctx.stroke();
+
+  for (const marker of smith.markers || []) {
+    if (marker.real == null || marker.imag == null) continue;
+    const isCenter = marker.type === "center";
+    ctx.fillStyle = isCenter ? "#b7442e" : "#d9822b";
+    ctx.beginPath();
+    ctx.arc(toX(marker.real), toY(marker.imag), isCenter ? 5.5 : 3.8, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function renderBandwidths(data) {
+  const primary = data?.primary_valley;
+  if (primary) {
+    elements.naPrimaryText.textContent = `中心频率 ${primary.frequency_mhz.toFixed(6)} MHz，S11 ${primary.s11_db.toFixed(3)} dB`;
+  } else {
+    elements.naPrimaryText.textContent = "暂无中心谷值。";
+  }
+
+  const labels = {
+    absolute_3db: "绝对 -3dB 带宽",
+    absolute_10db: "绝对 -10dB 带宽",
+    relative_3db: "相对 +3dB 带宽",
+    relative_10db: "相对 +10dB 带宽",
+  };
+  elements.bandwidthGrid.innerHTML = "";
+  for (const [key, label] of Object.entries(labels)) {
+    const bw = data?.bandwidths?.[key] || {};
+    const div = document.createElement("div");
+    div.className = "bandwidth-card";
+    div.innerHTML = `
+      <span>${label}</span>
+      <strong>${bw.width_hz == null ? "--" : formatHz(bw.width_hz)}</strong>
+      <small>左 ${formatHz(bw.left_hz)} / 右 ${formatHz(bw.right_hz)} · ${bw.complete ? "完整" : "不完整或未跨阈值"}</small>
+    `;
+    elements.bandwidthGrid.append(div);
+  }
+}
+
+function renderValleys(valleys = []) {
+  elements.valleyRows.innerHTML = "";
+  if (!valleys.length) {
+    elements.valleyRows.innerHTML = `<tr><td colspan="6">暂无 NA 测量数据</td></tr>`;
+    elements.valleyPageInfo.textContent = "第 0 / 0 页";
+    elements.valleyPrevBtn.disabled = true;
+    elements.valleyNextBtn.disabled = true;
+    return;
+  }
+  const pageCount = Math.max(1, Math.ceil(valleys.length / state.valleysPerPage));
+  state.valleyPage = Math.min(Math.max(1, state.valleyPage), pageCount);
+  const start = (state.valleyPage - 1) * state.valleysPerPage;
+  const pageRows = valleys.slice(start, start + state.valleysPerPage);
+  for (const [offset, valley] of pageRows.entries()) {
+    const abs10 = valley.bandwidths?.absolute_10db;
+    const rel3 = valley.bandwidths?.relative_3db;
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${start + offset + 1}</td>
+      <td>${valley.frequency_mhz.toFixed(6)}</td>
+      <td>${valley.s11_db.toFixed(3)}</td>
+      <td>${(valley.prominence_db || 0).toFixed(3)}</td>
+      <td>${abs10?.width_hz == null ? "--" : formatHz(abs10.width_hz)}</td>
+      <td>${rel3?.width_hz == null ? "--" : formatHz(rel3.width_hz)}</td>
+    `;
+    elements.valleyRows.append(tr);
+  }
+  elements.valleyPageInfo.textContent = `第 ${state.valleyPage} / ${pageCount} 页，共 ${valleys.length} 个谷值`;
+  elements.valleyPrevBtn.disabled = state.valleyPage <= 1;
+  elements.valleyNextBtn.disabled = state.valleyPage >= pageCount;
+}
+
+function renderNaStatus(data) {
+  state.naResult = data;
+  const status = data.status || {};
+  const config = status.config || data.config || {};
+  const calibration = status.calibration || {};
+  elements.naConfigText.textContent = config.name ? `${config.name} · ${formatHz(config.start_freq)}-${formatHz(config.stop_freq)}` : "未配置";
+  elements.naCalibrationText.textContent = calibration.in_progress ? "校准中" : calibration.complete ? "已校准" : "未校准";
+  elements.naSwitchText.textContent = status.switch_position || "--";
+  elements.naStatusText.textContent = status.progress_message || status.error || "等待操作";
+
+  const events = calibration.events || [];
+  elements.naCalibrationLog.textContent = events.length
+    ? events.map((event) => `${event.ok ? "✓" : "✗"} ${event.label || event.step} · ${event.switch_position || "--"} · ${event.scpi || "switch"} ${event.message ? `· ${event.message}` : ""}`).join("\n")
+    : "等待 NA 配置。";
+
+  const connected = Boolean(status.connected || state.lastStatus?.connected);
+  const busy = Boolean(status.measurement_in_progress || state.lastStatus?.measurement_in_progress);
+  elements.naConfigureBtn.disabled = busy;
+  elements.naCalibrateBtn.disabled = busy || !connected || !status.configured;
+  elements.naMeasureBtn.disabled = busy || !connected || !status.configured || !calibration.complete;
+  elements.naStopBtn.disabled = !busy;
+  elements.naSaveBtn.disabled = busy || !data.series;
+  elements.naExportBtn.disabled = busy || !data.series;
+
+  renderNaS11(data.series, data.primary_valley, data.bandwidths);
+  renderSmith(data.smith, data.is_full_sweep);
+  renderBandwidths(data);
+  renderValleys(data.valleys || []);
 }
 
 function renderPeaks(peaks = []) {
@@ -324,9 +568,15 @@ function renderDiagnostics(data) {
     ...formatItems("环境变量", data.environment || []),
   ];
   if (data.switch_import_error) {
-    lines.push("", `[切换器模块导入提示]`, data.switch_import_error);
+    lines.push("", "[切换器模块导入提示]", data.switch_import_error);
   }
   elements.diagnosticsResult.textContent = lines.join("\n");
+}
+
+async function refreshMode() {
+  const mode = await api("/api/mode");
+  setModeUi(mode.current_mode || state.mode);
+  return mode;
 }
 
 async function refreshStatus() {
@@ -347,12 +597,24 @@ async function refreshResult() {
   return result;
 }
 
+async function refreshNaResult() {
+  const result = await api("/api/na/result");
+  renderNaStatus(result);
+  return result;
+}
+
 async function runAction(label, action) {
   try {
     setBusy(true);
     logEvent(`${label} ...`);
     const result = await action();
-    await refreshResult();
+    await refreshMode();
+    await refreshStatus();
+    if (state.mode === "NA") {
+      await refreshNaResult();
+    } else {
+      await refreshResult();
+    }
     logEvent(`${label} 完成`);
     return result;
   } catch (error) {
@@ -364,14 +626,21 @@ async function runAction(label, action) {
 }
 
 function bindEvents() {
+  elements.modeSA.addEventListener("click", () => switchMode("SA"));
+  elements.modeNA.addEventListener("click", () => switchMode("NA"));
   elements.connectBtn.addEventListener("click", () =>
-    runAction("连接仪器", () => post("/api/device/connect", { ip_address: elements.deviceIp.value })),
+    runAction("连接仪器", async () => {
+      const requestedMode = state.mode;
+      const data = await post("/api/device/connect", { ip_address: elements.deviceIp.value });
+      if (requestedMode === "NA") {
+        await post("/api/mode", { mode: "NA" });
+      }
+      return data;
+    }),
   );
-  elements.disconnectBtn.addEventListener("click", () =>
-    runAction("断开仪器", () => post("/api/device/disconnect")),
-  );
+  elements.disconnectBtn.addEventListener("click", () => runAction("断开仪器", () => post("/api/device/disconnect")));
   elements.configureBtn.addEventListener("click", () =>
-    runAction("应用测试配置", () => post("/api/configure", { preset_key: elements.presetSelect.value })),
+    runAction("应用 SA 测试配置", () => post("/api/configure", { preset_key: elements.presetSelect.value })),
   );
   elements.demoBtn.addEventListener("click", () =>
     runAction("加载演示数据", () =>
@@ -396,22 +665,14 @@ function bindEvents() {
       renderSwitch(await post("/api/switch/disconnect"));
     }),
   );
-  elements.singleBtn.addEventListener("click", () =>
-    runAction("单次扫描", () => post("/api/measure/single")),
-  );
-  elements.slowBtn.addEventListener("click", () =>
-    runAction("15 秒 EMI 采样", () => post("/api/measure/timed", { duration_seconds: 15 })),
-  );
-  elements.fastBtn.addEventListener("click", () =>
-    runAction("5 分钟 EMI 采样", () => post("/api/measure/timed", { duration_seconds: 300 })),
-  );
-  elements.stopBtn.addEventListener("click", () =>
-    runAction("停止测量", () => post("/api/measure/stop")),
-  );
+  elements.singleBtn.addEventListener("click", () => runAction("单次扫描", () => post("/api/measure/single")));
+  elements.slowBtn.addEventListener("click", () => runAction("15 秒 EMI 采样", () => post("/api/measure/timed", { duration_seconds: 15 })));
+  elements.fastBtn.addEventListener("click", () => runAction("5 分钟 EMI 采样", () => post("/api/measure/timed", { duration_seconds: 300 })));
+  elements.stopBtn.addEventListener("click", () => runAction("停止测量", () => post("/api/measure/stop")));
   elements.saveBtn.addEventListener("click", () =>
     runAction("保存数据", async () => {
       const result = await post("/api/data/save");
-      alert(`已保存:\n${result.files.join("\n")}`);
+      alert(`已保存\n${result.files.join("\n")}`);
     }),
   );
   elements.analyzeBtn.addEventListener("click", () =>
@@ -431,23 +692,153 @@ function bindEvents() {
       renderDiagnostics(await api("/api/diagnostics"));
     }),
   );
+
+  elements.naConfigureBtn.addEventListener("click", () =>
+    runAction("应用 NA 预设", () => post("/api/na/configure", { preset_key: elements.naPresetSelect.value })),
+  );
+  elements.naCalibrateBtn.addEventListener("click", () => runAction("NA 自动校准", () => post("/api/na/calibrate")));
+  elements.naMeasureBtn.addEventListener("click", () => runAction("NA 天线测量", () => post("/api/na/measure")));
+  elements.naStopBtn.addEventListener("click", () => runAction("停止 NA 流程", () => post("/api/na/stop")));
+  elements.naSaveBtn.addEventListener("click", () =>
+    runAction("保存 NA 数据", async () => {
+      const result = await post("/api/na/data/save");
+      alert(`已保存\n${result.files.join("\n")}`);
+    }),
+  );
+  elements.naExportBtn.addEventListener("click", () =>
+    runAction("导出 NA 报告", async () => {
+      const data = await post("/api/na/report/export", { user_info: userInfoPayload() });
+      elements.naDownloadSlot.innerHTML = `<a href="${data.download_url}">下载 NA 报告：${data.file}</a>`;
+    }),
+  );
+  elements.valleyPrevBtn.addEventListener("click", () => {
+    state.valleyPage -= 1;
+    renderValleys(state.naResult?.valleys || []);
+  });
+  elements.valleyNextBtn.addEventListener("click", () => {
+    state.valleyPage += 1;
+    renderValleys(state.naResult?.valleys || []);
+  });
   for (const input of [elements.customer, elements.eut, elements.model, elements.engineer, elements.remark]) {
     input.addEventListener("change", () => post("/api/user-info", userInfoPayload()).catch(console.warn));
   }
-  window.addEventListener("resize", () => renderChart(state.result?.series, state.result?.peaks || []));
+  window.addEventListener("resize", () => {
+    renderChart(state.result?.series, state.result?.peaks || []);
+    renderNaS11(state.naResult?.series, state.naResult?.primary_valley, state.naResult?.bandwidths);
+    renderSmith(state.naResult?.smith, state.naResult?.is_full_sweep);
+  });
+}
+
+function drawEmpty(ctx, message, width, height) {
+  ctx.fillStyle = "#60717a";
+  ctx.font = "18px Bahnschrift, sans-serif";
+  ctx.fillText(message, 36, 52);
+}
+
+function drawCentered(ctx, message, width, height) {
+  ctx.fillStyle = "#60717a";
+  ctx.font = "18px Bahnschrift, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(message, width / 2, height / 2);
+  ctx.textAlign = "left";
+}
+
+function drawGrid(ctx, width, height, pad) {
+  ctx.strokeStyle = "rgba(31, 57, 63, .14)";
+  ctx.lineWidth = 1;
+  const plotH = height - pad.top - pad.bottom;
+  for (let i = 0; i <= 8; i++) {
+    const gy = pad.top + (plotH / 8) * i;
+    ctx.beginPath();
+    ctx.moveTo(pad.left, gy);
+    ctx.lineTo(width - pad.right, gy);
+    ctx.stroke();
+  }
+}
+
+function scaledPlotters(minX, maxX, minY, maxY, width, height, pad, useLog) {
+  const plotW = width - pad.left - pad.right;
+  const plotH = height - pad.top - pad.bottom;
+  const logMin = Math.log10(Math.max(minX, 0.001));
+  const logMax = Math.log10(Math.max(maxX, minX + 0.001));
+  const x = (value) => {
+    if (useLog) {
+      return pad.left + ((Math.log10(Math.max(value, 0.001)) - logMin) / Math.max(logMax - logMin, 1e-9)) * plotW;
+    }
+    return pad.left + ((value - minX) / Math.max(maxX - minX, 1e-9)) * plotW;
+  };
+  const y = (value) => pad.top + (1 - (value - minY) / Math.max(maxY - minY, 1e-9)) * plotH;
+  return { x, y };
+}
+
+function drawLine(ctx, xVals, yVals, x, y, color, width = 2, dash = []) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.setLineDash(dash);
+  ctx.beginPath();
+  yVals.forEach((value, index) => {
+    const px = x(xVals[index]);
+    const py = y(value);
+    if (index === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  });
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawHorizontal(ctx, y, left, right, color, dash = []) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.4;
+  ctx.setLineDash(dash);
+  ctx.beginPath();
+  ctx.moveTo(left, y);
+  ctx.lineTo(right, y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawAxisLabels(ctx, width, height, pad, leftLabel, rightLabel, yLabel) {
+  ctx.fillStyle = "#60717a";
+  ctx.font = "12px Cascadia Code, monospace";
+  ctx.fillText(leftLabel, pad.left, height - 18);
+  ctx.fillText(rightLabel, width - pad.right - Math.min(150, rightLabel.length * 7), height - 18);
+  ctx.save();
+  ctx.translate(20, height / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText(yLabel, 0, 0);
+  ctx.restore();
+}
+
+function formatHz(value) {
+  if (value == null || Number.isNaN(Number(value))) return "--";
+  const number = Number(value);
+  const abs = Math.abs(number);
+  if (abs >= 1e9) return `${(number / 1e9).toFixed(abs >= 10e9 ? 3 : 4)} GHz`;
+  if (abs >= 1e6) return `${(number / 1e6).toFixed(abs >= 100e6 ? 3 : 4)} MHz`;
+  if (abs >= 1e3) return `${(number / 1e3).toFixed(3)} kHz`;
+  return `${number.toFixed(3)} Hz`;
 }
 
 async function init() {
   createSwitchControls();
   bindEvents();
   populatePresets(await api("/api/presets"));
+  populateNaPresets(await api("/api/na/presets"));
+  await refreshMode();
   await refreshResult();
+  await refreshNaResult();
   logEvent("Web 控制台已初始化");
   setInterval(async () => {
     try {
       const status = await refreshStatus();
+      if (state.mode === "NA") {
+        await refreshNaResult();
+      }
       if (status.measurement_in_progress || state.wasMeasuring) {
-        await refreshResult();
+        if (state.mode === "NA") await refreshNaResult();
+        else await refreshResult();
       }
       state.wasMeasuring = status.measurement_in_progress;
     } catch (error) {

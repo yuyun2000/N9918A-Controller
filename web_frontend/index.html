@@ -3,16 +3,16 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>N9918A SA/EMC 控制台</title>
+    <title>N9918A SA/NA 控制台</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <div class="shell">
       <header class="hero">
         <div>
-          <p class="eyebrow">M5Stack EMC Lab / FieldFox SA</p>
-          <h1>N9918A SA/EMC 控制台</h1>
-          <p class="hero-copy">按“连接设备 → 应用配置 → 执行测量 → 保存/分析/报告”的顺序完成频谱测试。</p>
+          <p class="eyebrow">M5Stack RF Lab / FieldFox SA + NA</p>
+          <h1>N9918A SA/NA 控制台</h1>
+          <p class="hero-copy">同一套 Web 控制台完成 SA 频谱测试与 NA 天线 S11 测量；先选模式，再按页面流程连接、校准、测量和保存。</p>
         </div>
         <div class="status-card" id="statusCard">
           <span class="status-dot" id="statusDot"></span>
@@ -23,21 +23,35 @@
         </div>
       </header>
 
-      <section class="operator-strip" aria-label="推荐操作顺序">
-        <span>推荐顺序</span>
-        <strong>1 连接 N9918A</strong>
-        <strong>2 连接 RF Switch</strong>
-        <strong>3 选择测试配置并应用</strong>
-        <strong>4 先单次扫描，再做 15 秒或 5 分钟采样</strong>
-        <strong>5 保存数据、AI 分析或导出报告</strong>
+      <section class="mode-selector" aria-label="仪器模式选择">
+        <button id="modeSA" class="mode-card active" type="button">
+          <span>SA</span>
+          <strong>SA 频谱测试</strong>
+          <small>频谱扫描、EMI 采样、峰值判定、AI/PDF 报告</small>
+        </button>
+        <button id="modeNA" class="mode-card" type="button">
+          <span>NA</span>
+          <strong>NA 天线测量</strong>
+          <small>Fast Cal、S11 谷值、3dB/10dB 带宽、Smith Chart</small>
+        </button>
+        <p id="modeHint">未连接仪器时只切换页面；连接后切换模式会发送 INST:SEL "SA" 或 INST:SEL "NA";*OPC?。</p>
       </section>
 
-      <main class="workspace">
+      <section class="operator-strip" aria-label="推荐操作顺序">
+        <span>推荐顺序</span>
+        <strong>1 选择 SA 或 NA 模式</strong>
+        <strong>2 连接 N9918A 与 RF Switch</strong>
+        <strong>3 应用配置</strong>
+        <strong>4 NA 先校准再测量 / SA 先单扫再采样</strong>
+        <strong>5 保存数据或导出报告</strong>
+      </section>
+
+      <main id="saWorkspace" class="workspace mode-workspace active">
         <section class="panel command-panel">
           <div class="panel-title">
             <span>01</span>
             <h2>连接与配置</h2>
-            <button class="help-button" type="button" aria-label="连接与配置说明" data-help="先确认 N9918A 与电脑在同一网络，再输入仪器 IP。应用测试配置会设置频段、点数、RBW/VBW，并在 RF Switch 已连接时自动切到建议位置。">?</button>
+            <button class="help-button" type="button" aria-label="连接与配置说明" data-help="先确认 N9918A 与电脑在同一网络，再输入仪器 IP。SA 配置会设置频段、点数、RBW/VBW，并在 RF Switch 已连接时按频段自动切到建议位置。">?</button>
           </div>
           <div class="inline-form">
             <label>
@@ -49,16 +63,16 @@
           </div>
 
           <label class="full">
-            测试配置
+            SA 测试配置
             <select id="presetSelect"></select>
           </label>
-          <button id="configureBtn" class="wide">应用配置并自动切换</button>
+          <button id="configureBtn" class="wide">应用 SA 配置并自动切换</button>
 
           <div class="divider"></div>
           <div class="panel-title compact">
             <span>RF</span>
             <h3>Mini-Circuits 射频切换器</h3>
-            <button class="help-button" type="button" aria-label="射频切换器说明" data-help="连接后可读取 A/B/C/D 位置。一般不需要手动切换，应用测试配置时会按频段自动设置；手动切换前请确认线缆和夹具连接。">?</button>
+            <button class="help-button" type="button" aria-label="射频切换器说明" data-help="连接后可读取 A/B/C/D 位置。SA 模式会按测试频段自动给出建议位置；NA 校准会固定使用 LOAD=B1D1、OPEN=B2D1、ANTENNA=B2D2。手动切换前请确认线缆和夹具连接。">?</button>
           </div>
           <div class="switch-actions">
             <button id="connectSwitchBtn">连接切换器</button>
@@ -72,8 +86,8 @@
         <section class="panel run-panel">
           <div class="panel-title">
             <span>02</span>
-            <h2>测量流程</h2>
-            <button class="help-button" type="button" aria-label="测量流程说明" data-help="建议先用单次扫描确认频谱和连接，再运行 15 秒快速 EMI 采样；5 分钟采样耗时更长，适合最终确认。测量中可点停止请求中断。">?</button>
+            <h2>SA 测量流程</h2>
+            <button class="help-button" type="button" aria-label="SA 测量流程说明" data-help="建议先用单次扫描确认频谱和连接，再运行 15 秒快速 EMI 采样；5 分钟采样耗时更长，适合最终确认。测量中可点停止请求中断。">?</button>
           </div>
           <div class="run-buttons">
             <button id="demoBtn">加载演示数据</button>
@@ -102,7 +116,7 @@
           <div class="panel-title">
             <span>03</span>
             <h2>频谱态势</h2>
-            <button class="help-button" type="button" aria-label="频谱态势说明" data-help="曲线显示当前测量结果，红/绿虚线分别为 FCC/CE 参考限值。橙色点为峰值，红色点表示超过限值或风险更高。">?</button>
+            <button class="help-button" type="button" aria-label="频谱态势说明" data-help="曲线显示当前 SA 测量结果，红/绿虚线分别为 FCC/CE 参考限值。橙色点为峰值，红色点表示超过限值或风险更高。">?</button>
           </div>
           <canvas id="spectrumCanvas" width="1200" height="520"></canvas>
           <div class="legend">
@@ -142,7 +156,7 @@
           <div class="panel-title">
             <span>05</span>
             <h2>报告信息</h2>
-            <button class="help-button" type="button" aria-label="报告信息说明" data-help="这些字段会写入 PDF 报告。涉及客户或项目敏感信息时，导出或使用 AI 分析前请确认数据可保存或外发。">?</button>
+            <button class="help-button" type="button" aria-label="报告信息说明" data-help="这些字段会写入 PDF/HTML 报告。涉及客户或项目敏感信息时，导出或使用 AI 分析前请确认数据可保存或外发。">?</button>
           </div>
           <div class="report-form">
             <label>客户<input id="customer" value="M5Stack" /></label>
@@ -169,6 +183,117 @@
             <button class="help-button" type="button" aria-label="操作记录说明" data-help="这里记录本次页面操作和错误提示，便于现场排查连接、测量、导出或 AI 调用问题。">?</button>
           </div>
           <ol id="eventLog"></ol>
+        </section>
+      </main>
+
+      <main id="naWorkspace" class="workspace na-workspace mode-workspace" hidden>
+        <section class="panel na-flow-panel">
+          <div class="panel-title">
+            <span>NA</span>
+            <h2>1 选择天线预设</h2>
+            <button class="help-button" type="button" aria-label="天线预设说明" data-help="普通预设会在指定频段内搜索最深 S11 谷；全扫宽覆盖 30kHz-26.5GHz，只分页列出所有谷值，不显示 Smith Chart。默认点数：普通 2001，全扫宽 5001；IFBW 默认 10kHz。">?</button>
+          </div>
+          <label class="full">
+            天线预设
+            <select id="naPresetSelect"></select>
+          </label>
+          <button id="naConfigureBtn" class="wide primary">应用 NA 预设</button>
+
+          <div class="divider"></div>
+          <div class="panel-title compact">
+            <span>CAL</span>
+            <h3>2 自动校准</h3>
+            <button class="help-button" type="button" aria-label="自动校准说明" data-help="校准必须同时连接 N9918A 与 switchbox。流程固定为 LOAD=B1D1 执行 CORR:COLL:LOAD，OPEN=B2D1 执行 QuickCal INT/open-port，保存后切到 ANTENNA=B2D2 才允许测量。">?</button>
+          </div>
+          <div class="run-buttons">
+            <button id="naCalibrateBtn" class="primary">开始自动校准</button>
+            <button id="naMeasureBtn">3 开始测量</button>
+            <button id="naStopBtn" class="danger">停止 NA 流程</button>
+          </div>
+          <pre class="mini-readout" id="naCalibrationLog">等待 NA 配置。</pre>
+        </section>
+
+        <section class="panel na-status-panel">
+          <div class="panel-title">
+            <span>状态</span>
+            <h2>NA 状态</h2>
+            <button class="help-button" type="button" aria-label="NA 状态说明" data-help="这里显示当前预设、校准状态、switch 位置和最近错误。若某一步失败，请先检查线缆、夹具、switchbox 供电和 N9918A 模式。">?</button>
+          </div>
+          <div class="metric-grid na-metrics">
+            <div><span>当前预设</span><strong id="naConfigText">未配置</strong></div>
+            <div><span>校准状态</span><strong id="naCalibrationText">未校准</strong></div>
+            <div><span>Switch 位置</span><strong id="naSwitchText">--</strong></div>
+            <div><span>流程状态</span><strong id="naStatusText">等待操作</strong></div>
+          </div>
+          <div id="naDownloadSlot" class="download-slot"></div>
+          <div class="actions-row">
+            <button id="naSaveBtn">保存 NA 数据</button>
+            <button id="naExportBtn" class="primary">导出 NA 报告</button>
+          </div>
+        </section>
+
+        <section class="panel na-s11-panel">
+          <div class="panel-title">
+            <span>S11</span>
+            <h2>S11 曲线与中心谷值</h2>
+            <button class="help-button" type="button" aria-label="S11 曲线说明" data-help="曲线单位为 dB，越低表示反射越小。普通预设取当前频段最深谷作为中心频率；全扫宽会保留全部局部谷并按频率分页。">?</button>
+          </div>
+          <canvas id="naS11Canvas" width="1200" height="520"></canvas>
+          <div class="legend">
+            <span><i class="line measured"></i>S11 dB</span>
+            <span><i class="line threshold3"></i>-3dB / +3dB</span>
+            <span><i class="line threshold10"></i>-10dB / +10dB</span>
+            <span><i class="dot"></i>谷值</span>
+          </div>
+        </section>
+
+        <section class="panel na-bandwidth-panel">
+          <div class="panel-title">
+            <span>BW</span>
+            <h2>3dB / 10dB 双口径带宽</h2>
+            <button class="help-button" type="button" aria-label="双口径带宽说明" data-help="绝对口径：统计 S11<=-3dB 或 <=-10dB 的连续区间；相对口径：以中心谷值为基准，统计 S11<=谷值+3dB 或 谷值+10dB 的区间。端点用线性插值估算。">?</button>
+          </div>
+          <div class="primary-valley" id="naPrimaryText">暂无中心谷值。</div>
+          <div class="bandwidth-grid" id="bandwidthGrid"></div>
+        </section>
+
+        <section class="panel na-smith-panel">
+          <div class="panel-title">
+            <span>Smith</span>
+            <h2>Smith Chart</h2>
+            <button class="help-button" type="button" aria-label="Smith Chart 说明" data-help="普通预设显示复数 Gamma 轨迹，并标记中心频率、绝对 -3/-10dB 端点和相对 +3/+10dB 端点。全扫宽点数和跨度过大，默认不显示 Smith Chart。">?</button>
+          </div>
+          <canvas id="smithCanvas" width="760" height="520"></canvas>
+        </section>
+
+        <section class="panel na-valley-panel">
+          <div class="panel-title">
+            <span>谷值</span>
+            <h2>谷值列表</h2>
+            <button class="help-button" type="button" aria-label="谷值列表说明" data-help="全扫宽会列出所有局部谷值，并分页查看；普通预设也保留候选谷，便于确认是否存在多个谐振点。表格同时给出相邻带宽摘要。">?</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>频率 MHz</th>
+                  <th>S11 dB</th>
+                  <th>显著性 dB</th>
+                  <th>绝对 -10dB 带宽</th>
+                  <th>相对 +3dB 带宽</th>
+                </tr>
+              </thead>
+              <tbody id="valleyRows">
+                <tr><td colspan="6">暂无 NA 测量数据</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="pagination">
+            <button id="valleyPrevBtn">上一页</button>
+            <span id="valleyPageInfo">第 0 / 0 页</span>
+            <button id="valleyNextBtn">下一页</button>
+          </div>
         </section>
       </main>
     </div>
