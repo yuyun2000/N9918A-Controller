@@ -1,0 +1,15 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Local environment and credentials
+.env
+.env.*
+
+# Runtime outputs
+log.txt
+measurement_data/
+reports/
+temp_spectrum_graph.png
+*.pdf
+!doc/*.pdf

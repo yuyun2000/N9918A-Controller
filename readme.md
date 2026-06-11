@@ -1,145 +1,145 @@
 # N9918A-Controller
 
-基于 N9918A 矢量网络分析仪的 EMC 测试前端界面，集成自动切换器控制和 AI 分析功能。
+基于 Keysight N9918A FieldFox 的 EMC/SA 测试控制台，集成 Mini-Circuits RF Switch 自动切换、单次频谱采集、15s/5min EMI 采样、峰值判定、AI 异常分析和 PDF 报告导出。
+
+当前入口是 Web 前端：`web_app.py` + `web_frontend/`。仓库只保留 Web 控制台正在使用的 SA/EMC 测试流程和必要支撑文件。
 
 ## 系统要求
 
-- **操作系统**: Windows (目前仅支持 Windows 系统)
-- **Python 版本**: 3.8 (推荐)
-- **硬件设备**: 
-  - N9918A 矢量网络分析仪
-  - Mini-Circuits 切换器
-  - USB 连接线
+- 操作系统：Windows
+- Python：推荐 3.8，与 `pythonnet`、Mini-Circuits 64-bit DLL 保持一致
+- 硬件：
+  - Keysight N9918A FieldFox
+  - Mini-Circuits USB RF Switch
+  - USB 连接线与仪器网络连接
 
-## 安装步骤
+## 安装
 
-1. **克隆仓库**
-   ```bash
-   git clone https://github.com/yuyun2000/N9918A-Controller.git
-   cd N9918A-Controller
-   ```
+```powershell
+pip install -r requirements.txt
+```
 
-2. **安装 Python 依赖**
-   ```bash
-   pip install -r requirements.txt
-   ```
+如需使用 AI 分析，请在本地环境中配置密钥，不要写入代码：
 
-3. **连接硬件**
-   - 将切换器通过 USB 连接至计算机
-   - 确保 N9918A 设备网络连接正常
+```powershell
+$env:ARK_API_KEY="你的密钥"
+```
 
-4. **运行程序**
-   ```bash
-   python n9918a_frontend.py
-   ```
-   如果你创建了一个名为‘visa’的conda环境，可以双击‘run.bat’运行脚本
+可选配置：
 
-## 使用说明
+```powershell
+$env:ARK_BASE_URL="https://ark.cn-beijing.volces.com/api/v3"
+$env:ARK_MODEL="ep-20250708144105-dqzdw"
+```
 
-### 1. 基本配置
+## 启动 Web 前端
 
-#### 用户信息设置
-在界面底部填写测试信息：
-- **Customer**: 客户名称 (默认: M5Stack)
-- **EUT**: 被测设备名称 (默认: 产品A)  
-- **Model**: 产品型号 (默认: Model-X)
-- **Engineer**: 测试工程师 (默认: 张工程师)
-- **Remark**: 备注信息 (默认: 首次测试)
+```powershell
+python web_app.py
+```
 
-#### 设备连接
-1. 在界面第一行 "Device IP" 输入框中填入设备 IP 地址 (默认: 192.168.20.233)
-2. 点击 "Connect" 按钮连接设备
-3. 等待连接成功提示
+然后打开：
 
-如图：
-![填写配置](./assets/step1.png)
-### 2. 测试配置
+```text
+http://127.0.0.1:5000
+```
 
-1. **选择测试配置**: 在 "Test Config" 下拉菜单中选择频率段配置 (共4个频率段可选)
-2. **点击配置**: 点击 "Configure" 按钮应用配置
-3. **自动切换**: 配置完成后，切换器会自动切换到对应位置，**无需手动操作**
-4. **单次测量**: 点击 "Single" 按钮进行单次快速测量，会快速显示图像以验证无基本错误，之后才可以进行长时间测量
+如果暂时没有连接硬件，可以点击 Web 页面里的 `加载演示数据`，加载一组模拟频谱、峰值和 AI 分析文本，用于检查页面布局、图表、峰值表和报告按钮状态。演示数据不会访问 N9918A 或 RF Switch，不能替代真实硬件验收。
 
-![开始测量](./assets/step2.png)
-### 3. 测量操作
+如果你创建了名为 `visa` 的 conda 环境，也可以双击默认启动脚本：
 
+```powershell
+.\run.bat
+```
 
-#### 15秒测量 (推荐)
-- 点击 "Slow (15s)" 按钮
-- 15秒内多次采样，计算平均值、峰值等多条曲线
-- 支持后续 AI 分析和 PDF 导出
+## Web 控制台功能
 
-#### 5分钟测量
-- 点击 "Fast (5min)" 按钮  
-- 进行5分钟长时间测量
-- 支持 AI 分析和 PDF 导出
+页面主控件已中文化，模块标题旁的 `?` 会提示配置含义、推荐操作顺序、数据外发风险和排障要求。
 
-![开始测量](./assets/step3.png)
-### 4. 结果分析
+1. 连接 N9918A：输入设备 IP，默认 `192.168.20.233`。
+2. 连接 RF Switch：可查看型号、SN、固件、温度、USB 状态和 A/B/C/D 位置。
+3. 选择 Test Config 并配置仪器：
+   - `EMC_30MHz_1GHz`
+   - `LF_9kHz_150kHz`
+   - `MF_150kHz_30MHz`
+   - `HF_1GHz_3GHz`
+4. 自动切换 RF Switch：
+   - `< 30MHz`: A2 + D2，B/C 保持 1
+   - `30MHz - 3GHz`: A2 + D1，B/C 保持 1
+   - 其他范围：A/B/C/D 回到 1
+5. 测量：
+   - `加载演示数据`: 加载无硬件演示数据，用于 UI/流程预览
+   - `单次扫描`: 单次快速扫描，用于先确认频谱是否正常
+   - `15 秒采样`: 15 秒 EMI 采样，支持 AI 和 PDF
+   - `5 分钟采样`: 5 分钟 EMI 采样，支持 AI 和 PDF
+   - `停止测量`: 请求停止当前采样，并发送 `INIT:CONT OFF`
+6. 数据与报告：
+   - `保存数据`: 保存原始采样、峰值和频谱 CSV
+   - `AI 异常分析`: 对超限/临界 Margin 频点做异常分析
+   - `导出 PDF 报告`: 生成报告并提供浏览器下载链接
+   - `环境诊断`: 检查关键 Python 包、DLL、logo、字体、doc PDF 和 AI 环境变量
 
-#### AI 分析 （注意！！！使用AI分析不能翻墙，因为用的豆包，翻墙会报错）
-- 点击 "AI Analysis" 按钮
-- 耗时约 2 分钟，会弹出 AI 对测试结果的专业分析
+## 代码结构
 
-#### PDF 报告导出
-- **仅支持 15s 和 5min 测量模式**
-- 点击 "Export PDF" 按钮
-- 自动进行 AI 分析并生成完整测试报告
-- 总耗时约 2 分钟
-右上角会显示状态，如果发现有异常可以看日志
-![report](./assets/step3-5.png)
-#### 数据保存
-- 点击 "Save Data" 保存原始测量数据
-- 一般情况下不需要使用此功能
+```text
+n9918a_backend.py       # N9918A SA/EMC PyVISA + SCPI 控制和数据处理
+sa_test_service.py      # Web API 使用的测试流程服务层
+web_app.py              # Flask API 与静态资源服务
+web_frontend/           # Web 控制台 HTML/CSS/JS
+run.bat                 # 默认启动 Web 控制台
+Switch.py               # Mini-Circuits RF Switch 封装
+chat.py                 # AI 分析客户端
+utils/create_pdf.py     # PDF 报告生成
+doc/                    # N9918A/FieldFox 官方资料
+assets/m5logo2022.png   # PDF 报告 logo
+```
 
-最终生成的报告如下：
-![report](./assets/report.png)
+## SCPI 流程依据
+
+`doc/N9918A编程说明.pdf` 中的官方示例说明：
+
+- SA 模式切换使用 `INST:SEL 'SA';*OPC?` 等待完成。
+- 单次扫描示例使用 `INIT:IMM;*OPC?` 后读取 `TRACE:DATA?`。
+- SA/PAA/NF 模式读取数据使用 `TRACe:DATA?`。
+- 频率范围、点数、带宽使用 `SENS:FREQ:START`、`SENS:FREQ:STOP`、`SENS:SWE:POIN`、`SENS:BAND...` 命令族。
+
+当前代码已按这些要点保持流程：连接时等待 SA 模式切换完成，单次扫描优先使用 `:INIT:IMM;*OPC?`，长时间采样保留连续扫描读取 trace 的现有稳定流程。
+
 ## 注意事项
 
-1. **切换器控制**: 
-   - 仓库中的 DLL 文件为切换器控制库，请勿删除
-   - 切换器会根据选择的频率段自动切换，**禁止手动操作**
+- 不要删除 `mcl_RF_Switch_Controller64.dll`，它是切换器控制库。
+- PDF 导出仅面向 15s/5min 等 EMI 测量结果；单次扫描用于快速确认。
+- AI 分析会把峰值表和测试信息发送到配置的 AI 服务，涉及客户数据时需先确认可外发。
+- 生成的 PDF、CSV、日志和缓存属于运行产物，默认不纳入版本控制。
 
-2. **网络配置**: 
-   - 确保计算机与 N9918A 设备在同一网络段
-   - 默认设备 IP 为 192.168.20.233
+## 验证
 
-3. **测量模式**: 
-   - 只有 15s 和 5min 模式支持 PDF 导出
-   - AI 分析功能需要网络连接
+代码语法检查：
 
-4. **系统兼容性**: 
-   - 目前仅支持 Windows 系统
-   - 建议使用 Python 3.8 版本以确保最佳兼容性
-
-## 文件结构
-
-```
-├── n9918a_frontend.py      # 主前端界面
-├── n9918a_backend.py       # 后端控制逻辑
-├── Switch.py               # 切换器控制模块
-├── chat.py                 # AI 分析模块
-├── requirements.txt        # Python 依赖包
-├── *.dll                   # 切换器控制库 (Windows)
-└── utils/
-    └── create_pdf.py       # PDF 报告生成
+```powershell
+python -m py_compile n9918a_backend.py sa_test_service.py web_app.py Switch.py chat.py utils/create_pdf.py tests/test_web_app.py
 ```
 
-## 故障排除
+Web API smoke test（不连接硬件）：
 
-1. **切换器连接失败**: 检查 USB 连接，确认驱动安装正确
-2. **设备连接超时**: 检查网络连接和 IP 地址设置
-3. **AI 分析失败**: 检查网络连接，确认 API 访问正常
-4. **PDF 导出错误**: 确保使用 15s 或 5min 测量模式
+```powershell
+python -c "from web_app import app; c=app.test_client(); print(c.get('/api/presets').json['ok']); print(c.get('/api/status').json['ok'])"
+```
 
-## 技术支持
+依赖/关键文件诊断（不连接硬件）：
 
-如遇问题，请检查：
-- Python 版本和依赖包安装
-- 硬件连接状态
-- 网络配置正确性
+```powershell
+python -c "from web_app import app; c=app.test_client(); print(c.get('/api/diagnostics').json['data'])"
+```
 
----
+Demo 数据 smoke test（不连接硬件）：
 
-*建议在使用前仔细阅读本说明文档，确保正确配置和操作。*
+```powershell
+python -c "from web_app import app; c=app.test_client(); r=c.post('/api/demo/load', json={'duration_seconds': 15}).json; print(r['ok'], len(r['data']['peaks']))"
+```
 
+完整无硬件 Web smoke test：
+
+```powershell
+python -m unittest tests.test_web_app
+```

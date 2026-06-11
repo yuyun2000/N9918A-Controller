@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>N9918A SA/EMC 控制台</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">M5Stack EMC Lab / FieldFox SA</p>
+          <h1>N9918A SA/EMC 控制台</h1>
+          <p class="hero-copy">按“连接设备 → 应用配置 → 执行测量 → 保存/分析/报告”的顺序完成频谱测试。</p>
+        </div>
+        <div class="status-card" id="statusCard">
+          <span class="status-dot" id="statusDot"></span>
+          <div>
+            <strong id="statusTitle">就绪</strong>
+            <span id="statusDetail">等待连接仪器</span>
+          </div>
+        </div>
+      </header>
+
+      <section class="operator-strip" aria-label="推荐操作顺序">
+        <span>推荐顺序</span>
+        <strong>1 连接 N9918A</strong>
+        <strong>2 连接 RF Switch</strong>
+        <strong>3 选择测试配置并应用</strong>
+        <strong>4 先单次扫描，再做 15 秒或 5 分钟采样</strong>
+        <strong>5 保存数据、AI 分析或导出报告</strong>
+      </section>
+
+      <main class="workspace">
+        <section class="panel command-panel">
+          <div class="panel-title">
+            <span>01</span>
+            <h2>连接与配置</h2>
+            <button class="help-button" type="button" aria-label="连接与配置说明" data-help="先确认 N9918A 与电脑在同一网络，再输入仪器 IP。应用测试配置会设置频段、点数、RBW/VBW，并在 RF Switch 已连接时自动切到建议位置。">?</button>
+          </div>
+          <div class="inline-form">
+            <label>
+              设备 IP
+              <input id="deviceIp" value="192.168.20.233" autocomplete="off" />
+            </label>
+            <button id="connectBtn" class="primary">连接仪器</button>
+            <button id="disconnectBtn">断开仪器</button>
+          </div>
+
+          <label class="full">
+            测试配置
+            <select id="presetSelect"></select>
+          </label>
+          <button id="configureBtn" class="wide">应用配置并自动切换</button>
+
+          <div class="divider"></div>
+          <div class="panel-title compact">
+            <span>RF</span>
+            <h3>Mini-Circuits 射频切换器</h3>
+            <button class="help-button" type="button" aria-label="射频切换器说明" data-help="连接后可读取 A/B/C/D 位置。一般不需要手动切换，应用测试配置时会按频段自动设置；手动切换前请确认线缆和夹具连接。">?</button>
+          </div>
+          <div class="switch-actions">
+            <button id="connectSwitchBtn">连接切换器</button>
+            <button id="refreshSwitchBtn">刷新状态</button>
+            <button id="disconnectSwitchBtn">断开切换器</button>
+          </div>
+          <div class="switch-grid" id="switchGrid"></div>
+          <pre class="mini-readout" id="switchReadout">切换器未连接。</pre>
+        </section>
+
+        <section class="panel run-panel">
+          <div class="panel-title">
+            <span>02</span>
+            <h2>测量流程</h2>
+            <button class="help-button" type="button" aria-label="测量流程说明" data-help="建议先用单次扫描确认频谱和连接，再运行 15 秒快速 EMI 采样；5 分钟采样耗时更长，适合最终确认。测量中可点停止请求中断。">?</button>
+          </div>
+          <div class="run-buttons">
+            <button id="demoBtn">加载演示数据</button>
+            <button id="singleBtn" class="primary">单次扫描</button>
+            <button id="slowBtn">15 秒采样</button>
+            <button id="fastBtn">5 分钟采样</button>
+            <button id="stopBtn" class="danger">停止测量</button>
+          </div>
+          <div class="metric-grid">
+            <div><span>当前配置</span><strong id="metricConfig">未配置</strong></div>
+            <div><span>频率范围</span><strong id="metricRange">--</strong></div>
+            <div><span>RBW/VBW</span><strong id="metricBandwidth">--</strong></div>
+            <div><span>采样点数</span><strong id="metricPoints">--</strong></div>
+          </div>
+          <div class="actions-row">
+            <button id="saveBtn">保存数据</button>
+            <button id="analyzeBtn">AI 异常分析</button>
+            <button id="pdfBtn" class="primary">导出 PDF 报告</button>
+            <button id="diagnosticsBtn">环境诊断</button>
+          </div>
+          <div id="downloadSlot" class="download-slot"></div>
+          <pre class="diagnostics-readout" id="diagnosticsResult">环境诊断可检查 Python 依赖、DLL、logo、字体、文档和 AI 环境变量。</pre>
+        </section>
+
+        <section class="panel chart-panel">
+          <div class="panel-title">
+            <span>03</span>
+            <h2>频谱态势</h2>
+            <button class="help-button" type="button" aria-label="频谱态势说明" data-help="曲线显示当前测量结果，红/绿虚线分别为 FCC/CE 参考限值。橙色点为峰值，红色点表示超过限值或风险更高。">?</button>
+          </div>
+          <canvas id="spectrumCanvas" width="1200" height="520"></canvas>
+          <div class="legend">
+            <span><i class="line measured"></i>测量曲线</span>
+            <span><i class="line fcc"></i>FCC 限值</span>
+            <span><i class="line ce"></i>CE 限值</span>
+            <span><i class="dot"></i>峰值点</span>
+          </div>
+        </section>
+
+        <section class="panel peak-panel">
+          <div class="panel-title">
+            <span>04</span>
+            <h2>峰值与判定</h2>
+            <button class="help-button" type="button" aria-label="峰值与判定说明" data-help="Margin 为测量值减限值，正数表示超限，接近 0 表示临界。AI 分析会优先关注失败点和临界点。">?</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>频率 MHz</th>
+                  <th>dBμV</th>
+                  <th>FCC 裕量</th>
+                  <th>CE 裕量</th>
+                  <th>状态</th>
+                </tr>
+              </thead>
+              <tbody id="peakRows">
+                <tr><td colspan="6">暂无数据</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel report-panel">
+          <div class="panel-title">
+            <span>05</span>
+            <h2>报告信息</h2>
+            <button class="help-button" type="button" aria-label="报告信息说明" data-help="这些字段会写入 PDF 报告。涉及客户或项目敏感信息时，导出或使用 AI 分析前请确认数据可保存或外发。">?</button>
+          </div>
+          <div class="report-form">
+            <label>客户<input id="customer" value="M5Stack" /></label>
+            <label>被测设备<input id="eut" value="产品A" /></label>
+            <label>型号<input id="model" value="Model-X" /></label>
+            <label>工程师<input id="engineer" value="张工程师" /></label>
+            <label class="full">备注<input id="remark" value="首次测试" /></label>
+          </div>
+        </section>
+
+        <section class="panel ai-panel">
+          <div class="panel-title">
+            <span>AI</span>
+            <h2>异常分析</h2>
+            <button class="help-button" type="button" aria-label="AI 异常分析说明" data-help="AI 只用于辅助定位异常频点和可能原因。会把峰值表发送到配置的 AI 服务；客户数据不可外发时请不要点击。">?</button>
+          </div>
+          <pre id="aiResult">AI 分析结果会显示在这里。</pre>
+        </section>
+
+        <section class="panel log-panel">
+          <div class="panel-title compact">
+            <span>LOG</span>
+            <h3>操作记录</h3>
+            <button class="help-button" type="button" aria-label="操作记录说明" data-help="这里记录本次页面操作和错误提示，便于现场排查连接、测量、导出或 AI 调用问题。">?</button>
+          </div>
+          <ol id="eventLog"></ol>
+        </section>
+      </main>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>

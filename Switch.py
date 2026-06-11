@@ -105,26 +105,3 @@ class MiniCircuitsSwitchController:
             return status
         except Exception as e:
             raise Exception(f"获取 USB 状态失败: {e}")
-        
-# --- 示例使用 ---
-if __name__ == "__main__":
-    controller = MiniCircuitsSwitchController()  # 如果有多个设备，可传 serial_number
-    if controller.connect():
-        print("型号:", controller.get_model_name())
-        print("序列号:", controller.get_serial_number())
-        # 设置开关
-        # controller.set_switch('A', 2)
-        # controller.set_switch('B', 2)
-        # controller.set_switch('C', 2)
-        # controller.set_switch('D', 2)
-        controller.set_switch('A', 1)
-        controller.set_switch('B', 1)
-        controller.set_switch('C', 1)
-        controller.set_switch('D', 1)
-        # 读取状态
-        print("当前开关状态:", controller.get_switch_status())
-        # 读取温度
-        print("温度:", controller.get_temperature())
-        # 固件版本
-        print("固件版本:", controller.get_firmware())
-        controller.disconnect()

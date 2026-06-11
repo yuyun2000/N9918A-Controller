@@ -7,38 +7,40 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfbase import pdfmetrics
 import os
 import re
+from pathlib import Path
 
 # === 固定公司信息 ===
 COMPANY_NAME = "深圳市明栈信息科技有限公司"
 ENG_COMPANY_NAME = "M5Stack Technology Co., Ltd"
 
 # === 中文字体注册 ===
-font_path = './simfang.ttf'
-bold_font_path = './simhei.ttf'
-song_font_path = './simsun.ttc'  # 宋体
+FONT_DIR = Path(__file__).resolve().parent
+font_path = FONT_DIR / 'simfang.ttf'
+bold_font_path = FONT_DIR / 'simhei.ttf'
+song_font_path = FONT_DIR / 'simsun.ttc'  # 宋体
 
 try:
-    if os.path.exists(font_path):
-        pdfmetrics.registerFont(TTFont('simfang', font_path))
+    if font_path.exists():
+        pdfmetrics.registerFont(TTFont('simfang', str(font_path)))
     else:
         pdfmetrics.registerFont(TTFont('simfang', 'C:/Windows/Fonts/simfang.ttf'))
-except:
+except Exception:
     print("警告：未找到仿宋字体文件")
 
 try:
-    if os.path.exists(bold_font_path):
-        pdfmetrics.registerFont(TTFont('simhei', bold_font_path))
+    if bold_font_path.exists():
+        pdfmetrics.registerFont(TTFont('simhei', str(bold_font_path)))
     else:
         pdfmetrics.registerFont(TTFont('simhei', 'C:/Windows/Fonts/simhei.ttf'))
-except:
+except Exception:
     print("警告：未找到黑体字体文件")
 
 try:
-    if os.path.exists(song_font_path):
-        pdfmetrics.registerFont(TTFont('simsun', song_font_path))
+    if song_font_path.exists():
+        pdfmetrics.registerFont(TTFont('simsun', str(song_font_path)))
     else:
         pdfmetrics.registerFont(TTFont('simsun', 'C:/Windows/Fonts/simsun.ttc'))
-except:
+except Exception:
     print("警告：未找到宋体字体文件")
 
 def generate_test_report(
@@ -631,104 +633,3 @@ def _draw_summary_page(c, width, height, summary_text, styleTitle):
 
 
 # 使用示例
-if __name__ == "__main__":
-    # 示例频谱数据（用户提供的格式）
-    spectrum_data = '''
-
-QUASI_PEAK Mode Results:
-====================================================================================================
-No   Freq [MHz]   Amplitude [dBμV]   FCC Limit [dBμV]   FCC Margin [dB]    CE Limit [dBμV]    CE Margin [dB]     Status         
-----------------------------------------------------------------------------------------------------------------------------------
-1    175.015      43.05              40.0               3.05               40.0               3.05               FCC Fail, CE Fail
-2    274.925      47.79              46.0               1.79               47.0               0.79               FCC Fail, CE Fail
-3    46.975       39.91              40.0               -0.09              40.0               -0.09              Pass           
-4    224.970      44.89              46.0               -1.11              40.0               4.89               CE Fail        
-5    240.005      39.35              46.0               -6.65              47.0               -7.65              Pass           
-6    499.965      38.77              46.0               -7.23              47.0               -8.23              Pass           
-7    76.075       31.57              40.0               -8.43              40.0               -8.43              Pass           
-8    51.825       31.16              40.0               -8.84              40.0               -8.84              Pass           
-9    159.980      27.77              40.0               -12.23             40.0               -12.23             Pass           
-10   72.680       27.63              40.0               -12.37             40.0               -12.37             Pass           
-11   450.010      31.50              46.0               -14.50             47.0               -15.50             Pass           
-12   350.100      31.46              46.0               -14.54             47.0               -15.54             Pass           
-13   67.345       25.41              40.0               -14.59             40.0               -14.59             Pass           
-14   170.650      24.65              40.0               -15.35             40.0               -15.35             Pass           
-15   55.705       24.61              40.0               -15.39             40.0               -15.39             Pass           
-16   62.495       24.35              40.0               -15.65             40.0               -15.65             Pass           
-17   400.055      29.66              46.0               -16.34             47.0               -17.34             Pass           
-18   165.315      22.63              40.0               -17.37             40.0               -17.37             Pass           
-19   82.380       22.59              40.0               -17.41             40.0               -17.41             Pass           
-20   179.865      21.88              40.0               -18.12             40.0               -18.12             Pass           
-21   42.125       21.36              40.0               -18.64             40.0               -18.64             Pass           
-22   215.270      21.23              40.0               -18.77             40.0               -18.77             Pass           
-23   374.835      27.02              46.0               -18.98             47.0               -19.98             Pass           
-24   191.990      20.65              40.0               -19.35             40.0               -19.35             Pass           
-25   125.060      20.44              40.0               -19.56             40.0               -19.56             Pass           
-26   31.940       20.26              40.0               -19.74             40.0               -19.74             Pass           
-27   281.230      25.79              46.0               -20.21             47.0               -21.21             Pass           
-28   209.935      19.37              40.0               -20.63             40.0               -20.63             Pass           
-29   300.145      24.91              46.0               -21.09             47.0               -22.09             Pass           
-30   204.115      18.19              40.0               -21.81             40.0               -21.81             Pass           
-31   267.650      23.84              46.0               -22.16             47.0               -23.16             Pass           
-32   259.405      23.73              46.0               -22.27             47.0               -23.27             Pass           
-33   284.625      23.53              46.0               -22.47             47.0               -23.47             Pass           
-34   255.040      22.46              46.0               -23.54             47.0               -24.54             Pass           
-35   246.795      21.09              46.0               -24.91             47.0               -25.91             Pass           
-36   221.575      20.97              46.0               -25.03             40.0               -19.03             Pass           
-37   36.790       14.83              40.0               -25.17             40.0               -25.17             Pass           
-38   288.505      20.57              46.0               -25.43             47.0               -26.43             Pass           
-39   324.880      19.59              46.0               -26.41             47.0               -27.41             Pass           
-40   294.810      19.41              46.0               -26.59             47.0               -27.59             Pass           
-41   320.030      17.41              46.0               -28.59             47.0               -29.59             Pass           
-42   549.920      17.01              46.0               -28.99             47.0               -29.99             Pass           
-43   725.005      16.92              46.0               -29.08             47.0               -30.08             Pass           
-44   434.005      14.83              46.0               -31.17             47.0               -32.17             Pass           
-45   625.095      13.91              46.0               -32.09             47.0               -33.09             Pass           
-46   774.960      13.72              46.0               -32.28             47.0               -33.28             Pass           
-47   675.050      13.62              46.0               -32.38             47.0               -33.38             Pass           
-48   618.305      13.47              46.0               -32.53             47.0               -33.53             Pass           
-49   480.080      13.36              46.0               -32.64             47.0               -33.64             Pass           
-50   607.635      12.45              46.0               -33.55             47.0               -34.55             Pass           
-
-'''
-    
-    # 示例总结文本
-    summary_text = """### 异常频点及简要数据信息列表  
-1. **46.975 MHz**：Amplitude=39.91 dBμV，限值=40.0 dBμV，Margin=-0.09 dB，Status=Pass（临界，接近限值）
-2. **175.015 MHz**：Amplitude=42.82 dBμV，限值=40.0 dBμV，Margin=2.82 dB，Status=Fail（超出限值2.82 dB）
-3. **274.925 MHz**：Amplitude=47.79 dBμV，限值=46.0 dBμV，Margin=1.79 dB，Status=Fail（超出限值1.79 dB，Margin≤2 dB临界）
-
-### 异常点间的内在规律性
-1. **25 MHz基准时钟谐波关联**：175.015 MHz（25 MHz×7）和274.925 MHz（25 MHz×11）精确对应25 MHz基准时钟的7次、11次谐波（理论值分别为175 MHz、275 MHz），频率偏差<0.1 MHz，高度符合时钟谐波序列特征。
-2. **低频临界频点关联性**：46.975 MHz接近25 MHz×1.88（约47 MHz），可能为25 MHz时钟的2次谐波（50 MHz）的偏移，或与25 MHz时钟源相关的低频干扰（如电源纹波、晶振寄生频率）。
-
-### 测试建议
-
-* 检查25MHz时钟信号的屏蔽效果
-* 优化电源设计以减少纹波干扰
-* 考虑添加滤波器来抑制谐波辐射
-
-#### 总结
-
-该产品在EMC测试中表现出明显的时钟谐波问题，需要针对性的设计改进。
-"""
-    
-    # 项目信息
-    project_info = {
-        'customer': 'M5Stack',
-        'eut': '产品A',
-        'model': 'Model-X',
-        'mode': '正常工作模式',
-        'engineer': '张工程师',
-        'remark': '首次测试'
-    }
-    
-    # 生成报告
-    generate_test_report(
-        filename="test_report.pdf",
-        logo_path="../assets/m5logo2022.png",
-        project_info=project_info,
-        test_graph_path="../assets/m5logo2022.png",
-        spectrum_data=spectrum_data,
-        summary_text=summary_text
-    )

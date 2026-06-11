@@ -34,158 +34,54 @@ sys_prompt = '''
 '''
 
 
-import json
-from typing import List, Dict, Any, Callable
-import time
 from volcenginesdkarkruntime import Ark
 import os
+
+DEFAULT_BASE_URL = os.getenv("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3")
+DEFAULT_MODEL = os.getenv("ARK_MODEL", "ep-20250708144105-dqzdw")
 
 
 class ChatBot:
     def __init__(
-        self, 
-        api_key: str = None, 
-        base_url: str = "https://api.openai.com/v1", 
-        model: str = "gpt-3.5-turbo",
+        self,
+        api_key: str = None,
+        base_url: str = None,
+        model: str = None,
         system_message: str = "You are a helpful assistant."
     ):
         """
-        初始化ChatBot类
-        
+        Initialize the AI analysis client.
+
         Args:
-            api_key: OpenAI API密钥，如果为None则从环境变量OPENAI_API_KEY获取
-            base_url: API基础URL，可自定义为其他兼容OpenAI API的服务
-            model: 使用的模型名称或推理接入点ID
-            system_message: 系统预设指令
+            api_key: API key. Defaults to ARK_API_KEY, VOLCENGINE_API_KEY, or OPENAI_API_KEY.
+            base_url: API base URL for an OpenAI-compatible service.
+            model: Model name or Ark endpoint ID.
+            system_message: System prompt.
         """
-        self.api_key = api_key 
+        self.api_key = (
+            api_key
+            or os.getenv("ARK_API_KEY")
+            or os.getenv("VOLCENGINE_API_KEY")
+            or os.getenv("OPENAI_API_KEY")
+        )
         if not self.api_key:
-            raise ValueError("API key is required. Either pass it directly or set OPENAI_API_KEY environment variable.")
-        
-        # 初始化OpenAI客户端
+            raise ValueError("API key is required. Set ARK_API_KEY, VOLCENGINE_API_KEY, or OPENAI_API_KEY.")
+
         self.client = Ark(
-            base_url=base_url,
+            base_url=base_url or DEFAULT_BASE_URL,
             api_key=self.api_key
         )
-        
-        self.model = model
+        self.model = model or DEFAULT_MODEL
         self.conversation_history = [{"role": "system", "content": system_message}]
-        self.tools = []
-        self.function_map = {}
-        
-    def get_system_message(self) -> str:
-        """获取当前系统预设指令"""
-        return self.conversation_history[0]["content"] if self.conversation_history and self.conversation_history[0]["role"] == "system" else ""
-    
-    def clear_history(self, keep_system_message: bool = True) -> None:
-        """清除对话历史，默认保留系统预设指令"""
-        if keep_system_message and self.conversation_history and self.conversation_history[0]["role"] == "system":
-            self.conversation_history = [self.conversation_history[0]]
-        else:
-            self.conversation_history = []
- 
+
     def chat_no_stream(self, message: str):
-        print("chat log:",message)
+        print(f"AI analysis request length: {len(message)} chars")
         self.conversation_history.append({"role": "user", "content": message})
-        # 准备请求参数
         params = {
             "model": self.model,
             "messages": self.conversation_history,
             "stream": False,
-            "temperature":0,
-            "max_tokens":16384,
+            "temperature": 0,
+            "max_tokens": 16384,
         }
-
-        # 如果有工具定义，添加到请求中
-        if self.tools:
-            params["tools"] = self.tools
-            params["tool_choice"] = "auto"
-        # 升级方舟 SDK 到最新版本 pip install -U 'volcengine-python-sdk[ark]'
-        
-        # 非流式请求
-        response = self.client.chat.completions.create(**params)
-        
-        return response
-
-    def get_conversation_history(self) -> List[Dict[str, Any]]:
-        """获取完整对话历史"""
-        return self.conversation_history
-    
-
-
-
-if __name__ == "__main__":
-    bot = ChatBot(
-        api_key="b8800336-579b-4322-b2e9-ca0f4443db71",
-        base_url="https://ark.cn-beijing.volces.com/api/v3",
-        model="ep-20250708144105-dqzdw",
-        system_message=sys_prompt
-    )
-
-    print(f"系统指令: {bot.get_system_message()}")
-    print("-------------------------------------")
-
-    user_input = '''
-    频段:30MHZ-1GHz 测量时长：15s 测量数据：
-
-QUASI_PEAK Mode Results:
-====================================================================================================
-No   Freq [MHz]   Amplitude [dBμV]   FCC Limit [dBμV]   FCC Margin [dB]    Status         
-----------------------------------------------------------------------------------------------------
-1    175.015      42.82              40.0               2.82               FCC Fail       
-2    274.925      47.79              46.0               1.79               FCC Fail       
-3    46.975       39.91              40.0               -0.09              Pass           
-4    224.970      44.75              46.0               -1.25              Pass           
-5    499.965      38.77              46.0               -7.23              Pass           
-6    76.075       31.28              40.0               -8.72              Pass           
-7    240.005      36.50              46.0               -9.50              Pass           
-8    159.980      27.64              40.0               -12.36             Pass           
-9    72.680       27.63              40.0               -12.37             Pass           
-10   52.795       26.01              40.0               -13.99             Pass           
-11   450.010      31.46              46.0               -14.54             Pass           
-12   350.100      31.41              46.0               -14.59             Pass           
-13   170.650      24.65              40.0               -15.35             Pass           
-14   64.435       24.60              40.0               -15.40             Pass           
-15   69.285       24.26              40.0               -15.74             Pass           
-16   60.555       24.15              40.0               -15.85             Pass           
-17   400.055      29.60              46.0               -16.40             Pass           
-18   43.095       23.51              40.0               -16.49             Pass           
-19   56.190       23.09              40.0               -16.91             Pass           
-20   82.380       22.59              40.0               -17.41             Pass           
-21   178.895      21.67              40.0               -18.33             Pass           
-22   215.270      21.23              40.0               -18.77             Pass           
-23   374.835      27.02              46.0               -18.98             Pass           
-24   125.060      19.90              40.0               -20.10             Pass           
-25   281.230      25.79              46.0               -20.21             Pass           
-26   30.970       19.10              40.0               -20.90             Pass           
-27   300.145      24.91              46.0               -21.09             Pass           
-28   204.115      18.19              40.0               -21.81             Pass           
-29   267.650      23.84              46.0               -22.16             Pass           
-30   261.345      23.08              46.0               -22.92             Pass           
-31   260.375      22.93              46.0               -23.07             Pass           
-32   255.040      22.46              46.0               -23.54             Pass           
-33   287.535      22.02              46.0               -23.98             Pass           
-34   221.575      20.97              46.0               -25.03             Pass           
-35   294.810      19.41              46.0               -26.59             Pass           
-36   324.880      19.03              46.0               -26.97             Pass           
-37   115.845      12.35              40.0               -27.65             Pass           
-38   35.820       12.19              40.0               -27.81             Pass           
-39   320.030      16.93              46.0               -29.07             Pass           
-40   549.920      16.81              46.0               -29.19             Pass           
-41   725.005      16.67              46.0               -29.33             Pass           
-42   434.005      14.83              46.0               -31.17             Pass           
-43   625.095      13.91              46.0               -32.09             Pass           
-44   675.050      13.62              46.0               -32.38             Pass           
-45   618.305      13.47              46.0               -32.53             Pass           
-46   480.080      13.36              46.0               -32.64             Pass           
-47   774.960      12.74              46.0               -33.26             Pass           
-48   429.640      12.15              46.0               -33.85             Pass           
-49   893.785      11.74              46.0               -34.26             Pass           
-50   389.870      11.72              46.0               -34.28             Pass           
-
-
-'''
-    response = bot.chat_no_stream(user_input)
-    msg_obj = response.choices[0].message
-    content = msg_obj.content if hasattr(msg_obj, "content") else msg_obj.get("content", "")
-    print(content)
+        return self.client.chat.completions.create(**params)

@@ -1,12 +1,26 @@
 # n9918a_backend.py
-import pyvisa
+try:
+    import pyvisa
+except ImportError:
+    class _PyVisaStub:
+        class errors:
+            VisaIOError = Exception
+
+        @staticmethod
+        def ResourceManager(*_args, **_kwargs):
+            raise RuntimeError("pyvisa is not installed. Run `pip install -r requirements.txt`.")
+
+    pyvisa = _PyVisaStub()
 import matplotlib.pyplot as plt
 import numpy as np
 import time
 import csv
 import os
 from datetime import datetime
-from scipy import signal
+try:
+    from scipy import signal
+except ImportError:
+    signal = None
 
 # 在文件开头添加平台检测
 import platform
@@ -21,7 +35,7 @@ plt.rcParams['axes.unicode_minus'] = False
 
 class N9918AController:
     """
-    N9918A FieldFox Network Analyzer Controller for EMC Testing
+    N9918A FieldFox SA Controller for EMC Testing
     """
     
     # 预设参数配置
@@ -84,11 +98,11 @@ class N9918AController:
             self.device.timeout = self.timeout
             
             self.device.write("*CLS")
-            device_id = self.device.query("*IDN?")
+            device_id = self.device.query("*IDN[WARN]")
             print(f"Connected to: {device_id}")
             
-            self.device.write("INST:SEL 'SA'")
-            time.sleep(1)
+            # 官方示例使用 *OPC[WARN] 等待模式切换完成，避免后续配置命令跑在旧模式下。
+            self.device.query("INST:SEL 'SA';*OPC[WARN]")
             
             self.connected = True
             print("Successfully connected to N9918A")
@@ -125,12 +139,6 @@ class N9918AController:
             config_name
         )
     
-    def configure_custom_settings(self, start_freq, stop_freq, n_points, rbw, vbw):
-        """
-        配置自定义参数
-        """
-        return self._configure_device(start_freq, stop_freq, n_points, rbw, vbw, "Custom")
-    
     def _configure_device(self, start_freq, stop_freq, n_points, rbw, vbw, config_name):
         """
         内部配置设备方法
@@ -140,7 +148,7 @@ class N9918AController:
             return False
             
         try:
-            print(f"🔧 配置设备参数: {config_name}")
+            print(f"[CONFIG] 配置设备参数: {config_name}")
             
             # 关闭连续扫描
             self.device.write("INIT:CONT OFF")
@@ -151,34 +159,34 @@ class N9918AController:
             time.sleep(0.2)
             self.device.write(f":SENS:FREQ:STOP {stop_freq}")
             time.sleep(0.2)
-            print(f"📡 频率范围: {start_freq/1e6:.3f}MHz - {stop_freq/1e9:.3f}GHz")
+            print(f"[FREQ] 频率范围: {start_freq/1e6:.3f}MHz - {stop_freq/1e9:.3f}GHz")
             
             # Set number of points
             self.device.write(f":SENS:SWE:POIN {n_points}")
             time.sleep(0.2)
-            print(f"📈 采样点数: {n_points}")
+            print(f"[POINTS] 采样点数: {n_points}")
             
             # Set RBW and VBW
             self.device.write(f":SENS:BAND:RES {rbw}")
             time.sleep(0.5)
             self.device.write(f":SENS:BAND:VID {vbw}")
             time.sleep(0.5)
-            print(f"⚙️  RBW: {rbw}Hz, VBW: {vbw}Hz")
+            print(f"[BAND]  RBW: {rbw}Hz, VBW: {vbw}Hz")
             
             # Set Detector to Sample
             self.device.write(":SENS:DET SAMPLE")
             time.sleep(0.2)
-            print("🎯 Detector: Sample")
+            print("[DETECTOR] Detector: Sample")
             
             # Set Internal Amplifier ON
             self.device.write(":SENS:POW:GAIN:STAT ON")
             time.sleep(0.2)
-            print("🔊 内部放大器: ON")
+            print("[GAIN] 内部放大器: ON")
             
             # Set Internal Attenuator to 0dB
             self.device.write(":SENS:POW:ATT 0")
             time.sleep(0.2)
-            print("🔇 内部衰减器: 0dB")
+            print("[ATT] 内部衰减器: 0dB")
             
             # Store parameters
             self.start_freq = start_freq
@@ -188,7 +196,7 @@ class N9918AController:
             self.vbw = vbw
             self.current_config = config_name
             
-            print("✅ 参数配置完成! (连续扫描已暂停)")
+            print("[OK] 参数配置完成! (连续扫描已暂停)")
             return True
             
         except Exception as e:
@@ -205,21 +213,20 @@ class N9918AController:
             
         try:
             # 触发单次扫描
-            self.device.write(":INIT:IMM")
-            
-            # 获取扫描时间
             try:
-                sweep_time = float(self.device.query(":SENS:SWE:TIME?"))
-                wait_time = max(sweep_time * 1.2, 1.0)  # 等待1.2倍扫描时间或至少1秒
-            except:
-                # 如果无法获取扫描时间，使用估算值
-                wait_time = max(2.0, (self.stop_freq - self.start_freq) / 1e9 * 3)
-            
-            print(f"⏳ 等待扫描完成 ({wait_time:.1f}秒)...")
-            time.sleep(wait_time)
+                self.device.query(":INIT:IMM;*OPC[WARN]")
+            except Exception:
+                self.device.write(":INIT:IMM")
+                try:
+                    sweep_time = float(self.device.query(":SENS:SWE:TIME[WARN]"))
+                    wait_time = max(sweep_time * 1.2, 1.0)  # 等待1.2倍扫描时间或至少1秒
+                except Exception:
+                    wait_time = max(2.0, (self.stop_freq - self.start_freq) / 1e9 * 3)
+                print(f"[WAIT] 等待扫描完成 ({wait_time:.1f}秒)...")
+                time.sleep(wait_time)
             
             # Read trace data
-            self.device.write(":TRAC:DATA?")
+            self.device.write(":TRAC:DATA[WARN]")
             trace_data = self.device.read()
             amplitudes_dBuv = [float(x) for x in trace_data.split(",")]
             
@@ -257,7 +264,7 @@ class N9918AController:
 
 
     
-    def get_emc_measurement_fast(self, duration_seconds=15):
+    def get_emc_measurement_fast(self, duration_seconds=15, should_stop=None):
         """
         快速EMC测量（采集时间序列数据，PC端计算多种模式）
         """
@@ -266,23 +273,23 @@ class N9918AController:
             return {}
         
         total_start_time = time.time()
-        print(f"🚀 开始快速EMC测量 ({duration_seconds} 秒)")
+        print(f"[RUN] 开始快速EMC测量 ({duration_seconds} 秒)")
         print("=" * 50)
         
         try:
             # 1. 收集时间序列数据
-            time_series_data = self.collect_emc_time_series(duration_seconds)
+            time_series_data = self.collect_emc_time_series(duration_seconds, should_stop=should_stop)
             
             if not time_series_data:
-                print("❌ 未能收集到时间序列数据")
+                print("[ERROR] 未能收集到时间序列数据")
                 return {}
             
             collection_time = time.time() - total_start_time
-            print(f"   ⏱️  数据采集用时: {collection_time:.1f} 秒")
-            print(f"   📊  实际采样次数: {len(time_series_data)}")
+            print(f"   [TIME]  数据采集用时: {collection_time:.1f} 秒")
+            print(f"   [DATA]  实际采样次数: {len(time_series_data)}")
             
             # 2. PC端计算多种检测器模式
-            print(f"\n🔬 PC端计算EMC检测器模式...")
+            print(f"\n[CALC] PC端计算EMC检测器模式...")
             calculation_start_time = time.time()
             
             results = {}
@@ -292,14 +299,14 @@ class N9918AController:
                 frequencies, amplitudes = calculate_emc_detector_modes(time_series_data, mode)
                 if frequencies is not None and amplitudes is not None:
                     results[mode] = (frequencies, amplitudes)
-                    print(f"   ✅ {mode} 模式计算完成")
+                    print(f"   [OK] {mode} 模式计算完成")
                     if amplitudes:
                         max_val = max(amplitudes)
                         min_val = min(amplitudes)
                         avg_val = sum(amplitudes) / len(amplitudes)
                         print(f"       最大值: {max_val:.2f} dBμV, 最小值: {min_val:.2f} dBμV, 平均值: {avg_val:.2f} dBμV")
                 else:
-                    print(f"   ❌ {mode} 模式计算失败")
+                    print(f"   [ERROR] {mode} 模式计算失败")
             
             calculation_time = time.time() - calculation_start_time
             total_time = time.time() - total_start_time
@@ -329,8 +336,8 @@ class N9918AController:
                 "measurement_time": time.strftime("%Y-%m-%d %H:%M:%S")
             }
             
-            print(f"   ⏱️  计算用时: {calculation_time:.1f} 秒")
-            print(f"✅ 所有处理完成! 总用时: {total_time:.1f} 秒")
+            print(f"   [TIME]  计算用时: {calculation_time:.1f} 秒")
+            print(f"[OK] 所有处理完成! 总用时: {total_time:.1f} 秒")
             
             return results
             
@@ -340,7 +347,7 @@ class N9918AController:
             traceback.print_exc()
             return {}
 
-    def collect_emc_time_series(self, duration_seconds=15):
+    def collect_emc_time_series(self, duration_seconds=15, should_stop=None):
         """
         稳定版时间序列数据采集 - 支持长时间采样
         """
@@ -348,7 +355,7 @@ class N9918AController:
             print("ERROR: Device not connected")
             return []
         
-        print(f"🔄 开始时间序列数据采集 ({duration_seconds} 秒)")
+        print(f"[LOOP] 开始时间序列数据采集 ({duration_seconds} 秒)")
         
         try:
             # 设置为SAMPLE模式
@@ -378,7 +385,7 @@ class N9918AController:
                 elif self.rbw <= 10000:  # 10kHz以下
                     sample_interval *= 1.2
 
-            print(f"   ⏱️  采样间隔: {sample_interval}s (优化后), 目标采样次数: {int(duration_seconds / sample_interval)}")
+            print(f"   [TIME]  采样间隔: {sample_interval}s (优化后), 目标采样次数: {int(duration_seconds / sample_interval)}")
             
             time_series_data = []
             start_time = time.time()
@@ -386,7 +393,7 @@ class N9918AController:
             sample_count = 0
             max_samples = int(duration_seconds / sample_interval)
             
-            print(f"   ⏱️  采样间隔: {sample_interval}s, 目标采样次数: {max_samples}")
+            print(f"   [TIME]  采样间隔: {sample_interval}s, 目标采样次数: {max_samples}")
             
             # 用于检测卡死的变量
             last_successful_time = start_time
@@ -394,19 +401,23 @@ class N9918AController:
             max_consecutive_failures = 3
             
             while time.time() - start_time < duration_seconds and sample_count < max_samples:
+                if should_stop and should_stop():
+                    print("   [STOP]  用户请求停止采样")
+                    break
+
                 current_time = time.time()
                 
                 if current_time >= next_sample_time:
                     try:
                         # 每10次采样后清理一次通信缓冲区
                         if sample_count % 10 == 0 and sample_count > 0:
-                            print(f"   🔧 清理通信缓冲区 (采样 #{sample_count})")
+                            print(f"   [CONFIG] 清理通信缓冲区 (采样 #{sample_count})")
                             self.device.write("*CLS")  # 清除状态
                             time.sleep(0.1)
                         
                         # 每20次采样后重新启动连续扫描
                         if sample_count % 20 == 0 and sample_count > 0:
-                            print(f"   🔄 重新启动连续扫描 (采样 #{sample_count})")
+                            print(f"   [LOOP] 重新启动连续扫描 (采样 #{sample_count})")
                             self.device.write("INIT:CONT OFF")
                             time.sleep(0.2)
                             self.device.write("INIT:CONT ON")
@@ -417,22 +428,22 @@ class N9918AController:
                         
                         # 读取当前trace数据
                         sample_start_time = time.time()
-                        self.device.write(":TRACE:DATA?")
+                        self.device.write(":TRACE:DATA[WARN]")
                         trace_data = self.device.read()
                         
                         # 检查读取是否超时
                         read_duration = time.time() - sample_start_time
                         if read_duration > 8:  # 如果读取超过8秒，认为可能有问题
-                            print(f"   ⚠️  读取耗时异常: {read_duration:.2f}s")
+                            print(f"   [WARN]  读取耗时异常: {read_duration:.2f}s")
                         
                         amplitudes = [float(x) for x in trace_data.split(",")]
                         
                         # 验证数据完整性
                         if len(amplitudes) != self.n_points:
-                            print(f"   ⚠️  数据点数不匹配: 期望{self.n_points}, 实际{len(amplitudes)}")
+                            print(f"   [WARN]  数据点数不匹配: 期望{self.n_points}, 实际{len(amplitudes)}")
                             consecutive_failures += 1
                             if consecutive_failures >= max_consecutive_failures:
-                                print(f"   ❌ 连续失败{consecutive_failures}次，停止采样")
+                                print(f"   [ERROR] 连续失败{consecutive_failures}次，停止采样")
                                 break
                             continue
                         
@@ -459,7 +470,7 @@ class N9918AController:
                         if sample_count % 5 == 0 or sample_count <= 10:
                             elapsed = current_time - start_time
                             remaining = duration_seconds - elapsed
-                            print(f"   📊 采样 #{sample_count}/{max_samples} ({progress:.1f}%) "
+                            print(f"   [DATA] 采样 #{sample_count}/{max_samples} ({progress:.1f}%) "
                                 f"已用时: {elapsed:.1f}s, 剩余: {remaining:.1f}s")
                         
                         # 更新下次采样时间
@@ -470,10 +481,10 @@ class N9918AController:
                         
                     except pyvisa.errors.VisaIOError as e:
                         consecutive_failures += 1
-                        print(f"   ⚠️  VISA通信错误 (第{consecutive_failures}次): {e}")
+                        print(f"   [WARN]  VISA通信错误 (第{consecutive_failures}次): {e}")
                         
                         if consecutive_failures >= max_consecutive_failures:
-                            print(f"   ❌ 连续通信失败{consecutive_failures}次，尝试重新连接...")
+                            print(f"   [ERROR] 连续通信失败{consecutive_failures}次，尝试重新连接...")
                             # 尝试重新初始化连接
                             try:
                                 self.device.write("INIT:CONT OFF")
@@ -483,9 +494,9 @@ class N9918AController:
                                 self.device.write("INIT:CONT ON")
                                 time.sleep(0.5)
                                 consecutive_failures = 0
-                                print(f"   ✅ 重新连接成功")
+                                print(f"   [OK] 重新连接成功")
                             except:
-                                print(f"   ❌ 重新连接失败，停止采样")
+                                print(f"   [ERROR] 重新连接失败，停止采样")
                                 break
                         
                         # 等待一段时间后重试
@@ -493,17 +504,17 @@ class N9918AController:
                         
                     except Exception as e:
                         consecutive_failures += 1
-                        print(f"   ⚠️  采样失败 (第{consecutive_failures}次): {e}")
+                        print(f"   [WARN]  采样失败 (第{consecutive_failures}次): {e}")
                         
                         if consecutive_failures >= max_consecutive_failures:
-                            print(f"   ❌ 连续失败{consecutive_failures}次，停止采样")
+                            print(f"   [ERROR] 连续失败{consecutive_failures}次，停止采样")
                             break
                         
                         time.sleep(0.5)
                 
                 # 检查是否长时间无响应
                 if current_time - last_successful_time > 30:  # 30秒无成功采样
-                    print(f"   ❌ 设备长时间无响应，停止采样")
+                    print(f"   [ERROR] 设备长时间无响应，停止采样")
                     break
                 
                 # 短暂等待
@@ -515,14 +526,14 @@ class N9918AController:
                 time.sleep(0.2)
                 self.device.timeout = original_timeout  # 恢复原始超时
             except:
-                print("   ⚠️  停止扫描时出现异常")
+                print("   [WARN]  停止扫描时出现异常")
             
-            print(f"✅ 时间序列采集完成! 总采样: {len(time_series_data)} 次")
+            print(f"[OK] 时间序列采集完成! 总采样: {len(time_series_data)} 次")
             
             if time_series_data:
                 actual_duration = time_series_data[-1]['timestamp']
-                print(f"   📊 实际采样时长: {actual_duration:.1f}s")
-                print(f"   📊 平均采样间隔: {actual_duration/len(time_series_data):.2f}s")
+                print(f"   [DATA] 实际采样时长: {actual_duration:.1f}s")
+                print(f"   [DATA] 平均采样间隔: {actual_duration/len(time_series_data):.2f}s")
             
             return time_series_data
             
@@ -542,7 +553,7 @@ def calculate_emc_detector_modes(time_series_data, detector_type="QUASI_PEAK"):
     if not time_series_data:
         return None, None
     
-    print(f"   🎯 计算 {detector_type} 模式...")
+    print(f"   [DETECTOR] 计算 {detector_type} 模式...")
     
     frequencies = time_series_data[0]['frequencies']
     n_points = len(frequencies)
@@ -689,7 +700,7 @@ def save_emi_measurement_data(frequencies_dict, filename_prefix=None):
                     writer.writerow([freq, amp])
             
             saved_files.append(csv_filepath)
-            print(f"💾 {mode} 最终数据已保存: {csv_filepath}")
+            print(f"[SAVE] {mode} 最终数据已保存: {csv_filepath}")
     
     # 保存详细的采样数据（如果存在）
     if "sampling_data" in frequencies_dict:
@@ -714,7 +725,7 @@ def save_emi_measurement_data(frequencies_dict, filename_prefix=None):
                     writer.writerow(row)
             
             saved_files.append(detailed_filepath)
-            print(f"💾 所有采样详细数据已保存: {detailed_filepath}")
+            print(f"[SAVE] 所有采样详细数据已保存: {detailed_filepath}")
             
             # 保存采样统计信息
             stats_filename = f"{filename_prefix}_sampling_statistics.csv"
@@ -731,7 +742,7 @@ def save_emi_measurement_data(frequencies_dict, filename_prefix=None):
                     writer.writerow([i+1, f"{sample['timestamp']:.3f}", f"{min_val:.2f}", f"{max_val:.2f}", f"{avg_val:.2f}"])
             
             saved_files.append(stats_filepath)
-            print(f"💾 采样统计信息已保存: {stats_filepath}")
+            print(f"[SAVE] 采样统计信息已保存: {stats_filepath}")
     
     # 保存测量摘要
     if "measurement_summary" in frequencies_dict:
@@ -742,18 +753,18 @@ def save_emi_measurement_data(frequencies_dict, filename_prefix=None):
             json.dump(frequencies_dict["measurement_summary"], f, indent=2)
         
         saved_files.append(summary_filepath)
-        print(f"💾 测量摘要已保存: {summary_filepath}")
+        print(f"[SAVE] 测量摘要已保存: {summary_filepath}")
     
     # 保存采样信息
     if "sampling_info" in frequencies_dict:
         info_filename = f"{filename_prefix}_sampling_info.json"
         info_filepath = os.path.join(measurement_folder, info_filename)
         
-        with open(info_filename, 'w') as f:
+        with open(info_filepath, 'w') as f:
             json.dump(frequencies_dict["sampling_info"], f, indent=2)
         
         saved_files.append(info_filepath)
-        print(f"💾 采样信息已保存: {info_filepath}")
+        print(f"[SAVE] 采样信息已保存: {info_filepath}")
     
     return saved_files
 
@@ -852,22 +863,27 @@ def post_process_peak_search(frequencies, amplitudes, peak_distance=30, min_prom
     # 动态调整最小高度阈值
     min_height = mean_amp + dynamic_prominence * 0.3  # 进一步降低阈值以检测更多峰值
     
-    # 多级峰值检测
-    # 第一级：显著峰值检测
-    primary_peaks, _ = signal.find_peaks(
-        amplitudes,
-        distance=peak_distance,
-        prominence=dynamic_prominence,
-        height=min_height
-    )
-    
-    # 第二级：次要峰值检测（更宽松的条件）
-    secondary_peaks, _ = signal.find_peaks(
-        amplitudes,
-        distance=max(5, peak_distance // 4),  # 更小的间隔
-        prominence=max(0.3, dynamic_prominence * 0.3),  # 更低的显著性要求
-        height=mean_amp + 0.3  # 更低的高度要求
-    )
+    # 多级峰值检测；开发环境缺少 scipy 时退回手写算法，硬件环境仍建议安装 requirements。
+    if signal:
+        primary_peaks, _ = signal.find_peaks(
+            amplitudes,
+            distance=peak_distance,
+            prominence=dynamic_prominence,
+            height=min_height
+        )
+        secondary_peaks, _ = signal.find_peaks(
+            amplitudes,
+            distance=max(5, peak_distance // 4),  # 更小的间隔
+            prominence=max(0.3, dynamic_prominence * 0.3),  # 更低的显著性要求
+            height=mean_amp + 0.3  # 更低的高度要求
+        )
+    else:
+        primary_peaks = find_peaks_manual(amplitudes, distance=peak_distance, prominence=dynamic_prominence)
+        secondary_peaks = find_peaks_manual(
+            amplitudes,
+            distance=max(5, peak_distance // 4),
+            prominence=max(0.3, dynamic_prominence * 0.3),
+        )
     
     # 第三级：检测所有超过限值的点（即使不是峰值）
     threshold_peaks = []
@@ -969,75 +985,7 @@ def post_process_peak_search(frequencies, amplitudes, peak_distance=30, min_prom
     
     return peak_results
 
-def plot_emc_spectrum(frequencies, amplitudes, peak_results=None, show_limits=True):
-    """
-    绘制EMC频谱图 - 自适应窗口大小版本
-    """
-    # 创建图形，使用相对大小
-    fig, ax = plt.subplots(figsize=(12, 8))
-    
-    # 设置中文字体
-    plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans', 'Arial Unicode MS']
-    plt.rcParams['axes.unicode_minus'] = False
-    
-    freq_mhz = [f / 1e6 for f in frequencies]
-    
-    # 绘制测量数据
-    ax.semilogx(freq_mhz, amplitudes, 'b-', linewidth=1, label='测量频谱', alpha=0.8)
-    
-    # 绘制FCC和CE限值
-    if show_limits and frequencies:
-        fcc_limits = []
-        ce_limits = []
-        for freq in frequencies:
-            fcc_limit, ce_limit = get_fcc_ce_limits(freq)
-            fcc_limits.append(fcc_limit)
-            ce_limits.append(ce_limit)
-        
-        ax.semilogx(freq_mhz, fcc_limits, 'r--', linewidth=1.5, label='FCC Class B', alpha=0.7)
-        ax.semilogx(freq_mhz, ce_limits, 'g--', linewidth=1.5, label='CE Class B', alpha=0.7)
-    
-    # 标记峰值
-    if peak_results:
-        for peak in peak_results:
-            freq_mhz_peak = peak['frequency_mhz']
-            amp_dbuv = peak['amplitude_dbuv']
-            ax.plot(freq_mhz_peak, amp_dbuv, 'ro', markersize=6, 
-                   markeredgecolor='black', markeredgewidth=0.5)
-            
-            exceed_fcc = peak['exceed_fcc']
-            exceed_ce = peak['exceed_ce']
-            color = 'red' if exceed_fcc or exceed_ce else 'black'
-            
-            # 简化的标注，避免重叠
-            ax.annotate(f'{freq_mhz_peak:.1f}MHz', 
-                       xy=(freq_mhz_peak, amp_dbuv), 
-                       xytext=(0, 15), textcoords='offset points',
-                       fontsize=7, color=color,
-                       ha='center', va='bottom',
-                       bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8, edgecolor='gray'))
-    
-    # 设置标签和标题
-    ax.set_xlabel('频率 (MHz)', fontsize=10)
-    ax.set_ylabel('幅度 (dBμV)', fontsize=10)
-    ax.set_title('EMC频谱分析', fontsize=12, pad=20)
-    
-    # 网格和图例
-    ax.grid(True, which="both", alpha=0.3, linestyle='-', linewidth=0.5)
-    ax.legend(loc='upper right', fontsize=9)
-    
-    # 设置坐标轴范围
-    if frequencies:
-        ax.set_xlim([min(freq_mhz), max(freq_mhz)])
-    
-    if amplitudes:
-        y_min = min(min(amplitudes), 20) - 10
-        y_max = max(max(amplitudes), 80) + 10
-        ax.set_ylim([y_min, y_max])
-    
-    # 优化布局
-    plt.tight_layout()
-    return fig
+
 def save_spectrum_data(frequencies, amplitudes, filename=None):
     """
     保存频谱数据
@@ -1100,32 +1048,3 @@ def save_peak_analysis(peak_results, filename=None):
     
     return filepath
 
-def print_peak_summary(peak_results):
-    """
-    打印峰值分析摘要
-    """
-    if not peak_results:
-        print("未检测到峰值")
-        return
-    
-    print("\n📊 峰值分析结果:")
-    print("=" * 90)
-    print(f"{'频率(MHz)':<12} {'幅度(dBμV)':<12} {'FCC限值':<10} {'CE限值':<10} {'FCC裕量':<10} {'CE裕量':<10} {'状态':<15}")
-    print("-" * 90)
-    
-    for peak in peak_results:
-        status = []
-        if peak['exceed_fcc']:
-            status.append("FCC超标")
-        if peak['exceed_ce']:
-            status.append("CE超标")
-        if not status:
-            status = ["合规"]
-        
-        print(f"{peak['frequency_mhz']:<12.3f} "
-              f"{peak['amplitude_dbuv']:<12.2f} "
-              f"{peak['fcc_limit']:<10.1f} "
-              f"{peak['ce_limit']:<10.1f} "
-              f"{peak['fcc_margin']:<10.2f} "
-              f"{peak['ce_margin']:<10.2f} "
-              f"{', '.join(status):<15}")
