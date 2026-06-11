@@ -55,7 +55,7 @@
 - 连接 N9918A、切换 RF Switch、执行测量、长时间采样、导出报告或调用外部 AI 服务，都可能改变设备状态或暴露数据；用户未明确要求时不要主动执行。
 - 任何会改变仪器状态的命令必须先说明风险；涉及开关切换、长测、外部发送客户数据时，等待用户确认。
 - `Switch.py` 的开关位置语义是 Mini-Circuits DLL 的 0/1 映射到位置 1/2；修改时必须确认 A/B/C/D 的物理链路含义。
-- NA 校准固定顺序按 FieldFox QuickCal 文档执行：OPEN=`B2D1` + `CORR:COLL:INT 1;*OPC?` 必须先于 LOAD=`B1D1` + `CORR:COLL:LOAD 1;*OPC?`，最后 ANTENNA=`B2D2`；否则仪器可能返回 `Must acquire open port first`。
+- NA 校准固定顺序按 FieldFox QuickCal 文档执行，且 NA 使用 switchbox 的 B/C 通道：OPEN=`B2C1` + `CORR:COLL:INT 1;*OPC?` 必须先于 LOAD=`B1C1` + `CORR:COLL:LOAD 1;*OPC?`，最后 ANTENNA=`B2C2`；否则仪器可能返回 `Must acquire open port first`。SA 仍使用原有 A/D 自动切换逻辑。
 - SCPI 调试先做只读查询或短流程复现，例如 `*IDN?`、资源枚举、当前配置查询；避免直接上来改模式或触发扫描。
 - 对超时、断连、VISA IO 错误、DLL 加载失败、RF Switch 未连接等情况，要保留清晰错误提示和降级路径。
 

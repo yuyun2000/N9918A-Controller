@@ -239,7 +239,7 @@ class WebAppSmokeTest(unittest.TestCase):
         self.assertTrue(calibrated["ok"], calibrated)
         self.assertTrue(calibrated["data"]["status"]["calibration"]["complete"])
         steps = [event["switch_position"] for event in calibrated["data"]["status"]["calibration"]["events"]]
-        self.assertEqual(steps[:4], ["B2D1", "B1D1", "B1D1", "B2D2"])
+        self.assertEqual(steps[:4], ["B2C1", "B1C1", "B1C1", "B2C2"])
 
         measure = self.client.post("/api/na/measure").get_json()
         self.assertTrue(measure["ok"], measure)
@@ -315,7 +315,7 @@ class BackendRegressionTest(unittest.TestCase):
         self.assertTrue(result["complete"])
         self.assertEqual(
             switch.calls,
-            [("B", 2), ("D", 1), ("B", 1), ("D", 1), ("B", 2), ("D", 2)],
+            [("B", 2), ("C", 1), ("B", 1), ("C", 1), ("B", 2), ("C", 2)],
         )
         commands = [command for _kind, command in device.commands]
         self.assertIn("CORR:COLL:METH:QCAL:CAL 1", commands)

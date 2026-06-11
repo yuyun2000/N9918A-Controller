@@ -93,9 +93,9 @@ NA_PRESET_CONFIGS = {
 }
 
 SWITCH_POSITIONS = {
-    "LOAD": {"B": 1, "D": 1},
-    "OPEN": {"B": 2, "D": 1},
-    "ANTENNA": {"B": 2, "D": 2},
+    "LOAD": {"B": 1, "C": 1},
+    "OPEN": {"B": 2, "C": 1},
+    "ANTENNA": {"B": 2, "C": 2},
 }
 
 
@@ -238,21 +238,21 @@ class N9918ANAController:
             self._check_stop(should_stop)
             self._set_switch_position(switch_controller, "OPEN")
             self._write("CORR:COLL:METH:QCAL:CAL 1")
-            emit(CalibrationEvent("OPEN", "OPEN 校准", "B2D1", self.last_scpi, True, "已切到开路通道"))
+            emit(CalibrationEvent("OPEN", "OPEN 校准", "B2C1", self.last_scpi, True, "已切到开路通道"))
             self._query("CORR:COLL:INT 1;*OPC?")
-            emit(CalibrationEvent("OPEN_DONE", "OPEN 校准完成", "B2D1", self.last_scpi, True, "QuickCal 内部开路/短路采集完成"))
+            emit(CalibrationEvent("OPEN_DONE", "OPEN 校准完成", "B2C1", self.last_scpi, True, "QuickCal 内部开路/短路采集完成"))
 
             self._check_stop(should_stop)
             self._set_switch_position(switch_controller, "LOAD")
-            emit(CalibrationEvent("LOAD", "LOAD 校准", "B1D1", None, True, "已切到负载通道"))
+            emit(CalibrationEvent("LOAD", "LOAD 校准", "B1C1", None, True, "已切到负载通道"))
             self._query("CORR:COLL:LOAD 1;*OPC?")
-            emit(CalibrationEvent("LOAD_DONE", "LOAD 校准完成", "B1D1", self.last_scpi, True, "负载采集完成"))
+            emit(CalibrationEvent("LOAD_DONE", "LOAD 校准完成", "B1C1", self.last_scpi, True, "负载采集完成"))
 
             self._check_stop(should_stop)
             self._write("CORR:COLL:SAVE 0")
-            emit(CalibrationEvent("SAVE", "保存校准", "B1D1", self.last_scpi, True, "校准参数已保存"))
+            emit(CalibrationEvent("SAVE", "保存校准", "B1C1", self.last_scpi, True, "校准参数已保存"))
             self._set_switch_position(switch_controller, "ANTENNA")
-            emit(CalibrationEvent("ANTENNA", "切到天线测量", "B2D2", None, True, "已切到天线通道"))
+            emit(CalibrationEvent("ANTENNA", "切到天线测量", "B2C2", None, True, "已切到天线通道"))
         except N9918ANAError:
             raise
         except Exception as exc:
@@ -308,9 +308,9 @@ class N9918ANAController:
 
     def _set_switch_position(self, switch_controller, position_key):
         positions = SWITCH_POSITIONS[position_key]
-        for switch_name in ("B", "D"):
+        for switch_name in ("B", "C"):
             switch_controller.set_switch(switch_name, positions[switch_name])
-        self.last_switch_position = f"B{positions['B']}D{positions['D']}"
+        self.last_switch_position = f"B{positions['B']}C{positions['C']}"
 
     def _require_connected(self):
         if not self.connected or not self.device:

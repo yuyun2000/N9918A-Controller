@@ -90,9 +90,9 @@ http://127.0.0.1:5000
    - `ANT_5G`: 4.8-6.0GHz
    - `ANT_FULL`: 30kHz-26.5GHz，全扫宽只分页列出谷值，不显示 Smith Chart
 3. 自动校准必须同时连接 N9918A 与 switchbox，顺序按 FieldFox QuickCal 文档固定为：
-   - OPEN: `B2D1`，先执行 `CORR:COLL:METH:QCAL:CAL 1`，再执行 `CORR:COLL:INT 1;*OPC?`
-   - LOAD: `B1D1`，执行 `CORR:COLL:LOAD 1;*OPC?`
-   - SAVE/ANTENNA: 执行 `CORR:COLL:SAVE 0`，再切到 `B2D2`
+   - OPEN: `B2C1`，先执行 `CORR:COLL:METH:QCAL:CAL 1`，再执行 `CORR:COLL:INT 1;*OPC?`
+   - LOAD: `B1C1`，执行 `CORR:COLL:LOAD 1;*OPC?`
+   - SAVE/ANTENNA: 执行 `CORR:COLL:SAVE 0`，再切到 `B2C2`
 4. 测量读取 `CALC:DATA:FDATa?` 得到 S11 dB，读取 `CALC:DATA:SDATA?` 得到复数 Gamma；普通预设显示 S11 曲线、中心谷、绝对/相对 3dB/10dB 带宽和 Smith Chart。
 5. 带宽有两套口径：绝对阈值 `S11 <= -3dB/-10dB`，相对谷值 `S11 <= valley+3dB/valley+10dB`，端点用线性插值估算。
 

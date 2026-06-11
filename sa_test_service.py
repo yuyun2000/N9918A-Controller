@@ -634,10 +634,10 @@ class SATestService:
             try:
                 time.sleep(0.1)
                 events = [
-                    {"step": "OPEN", "label": "OPEN 校准", "switch_position": "B2D1", "scpi": "CORR:COLL:INT 1;*OPC?", "ok": True, "message": "演示"},
-                    {"step": "LOAD", "label": "LOAD 校准", "switch_position": "B1D1", "scpi": "CORR:COLL:LOAD 1;*OPC?", "ok": True, "message": "演示"},
-                    {"step": "SAVE", "label": "保存校准", "switch_position": "B1D1", "scpi": "CORR:COLL:SAVE 0", "ok": True, "message": "演示"},
-                    {"step": "ANTENNA", "label": "切到天线测量", "switch_position": "B2D2", "scpi": None, "ok": True, "message": "演示"},
+                    {"step": "OPEN", "label": "OPEN 校准", "switch_position": "B2C1", "scpi": "CORR:COLL:INT 1;*OPC?", "ok": True, "message": "演示"},
+                    {"step": "LOAD", "label": "LOAD 校准", "switch_position": "B1C1", "scpi": "CORR:COLL:LOAD 1;*OPC?", "ok": True, "message": "演示"},
+                    {"step": "SAVE", "label": "保存校准", "switch_position": "B1C1", "scpi": "CORR:COLL:SAVE 0", "ok": True, "message": "演示"},
+                    {"step": "ANTENNA", "label": "切到天线测量", "switch_position": "B2C2", "scpi": None, "ok": True, "message": "演示"},
                 ]
                 with self.lock:
                     self.na_calibration = {
@@ -646,7 +646,7 @@ class SATestService:
                         "events": events,
                         "error": None,
                         "last_scpi": "CORR:COLL:SAVE 0",
-                        "switch_position": "B2D2",
+                        "switch_position": "B2C2",
                     }
                     self.progress_message = "NA 演示校准完成"
             finally:

@@ -67,7 +67,7 @@
             <div class="panel-title compact">
               <span>RF</span>
               <h3>Mini-Circuits 射频切换器</h3>
-              <button class="help-button" type="button" aria-label="射频切换器说明" data-help="连接后可读取 A/B/C/D 位置。SA 模式会按测试频段自动给出建议位置；NA 校准按文档标准 QuickCal 顺序执行 OPEN=B2D1、LOAD=B1D1、ANTENNA=B2D2。手动切换前请确认线缆和夹具连接。">?</button>
+              <button class="help-button" type="button" aria-label="射频切换器说明" data-help="连接后可读取 A/B/C/D 位置。SA 模式仍按原有 A/D 通道自动切换；NA 校准按文档标准 QuickCal 顺序执行 OPEN=B2C1、LOAD=B1C1、ANTENNA=B2C2。手动切换前请确认线缆和夹具连接。">?</button>
             </div>
             <div class="switch-actions">
               <button id="connectSwitchBtn">连接切换器</button>
@@ -207,7 +207,7 @@
           <div class="panel-title compact">
             <span>CAL</span>
             <h3>2 自动校准</h3>
-            <button class="help-button" type="button" aria-label="自动校准说明" data-help="校准必须同时连接 N9918A 与 switchbox。按文档标准 QuickCal 流程：先 OPEN=B2D1 执行 CORR:COLL:INT，再 LOAD=B1D1 执行 CORR:COLL:LOAD，保存后切到 ANTENNA=B2D2 才允许测量。">?</button>
+            <button class="help-button" type="button" aria-label="自动校准说明" data-help="校准必须同时连接 N9918A 与 switchbox。按文档标准 QuickCal 流程：先 OPEN=B2C1 执行 CORR:COLL:INT，再 LOAD=B1C1 执行 CORR:COLL:LOAD，保存后切到 ANTENNA=B2C2 才允许测量。">?</button>
           </div>
           <div class="run-buttons">
             <button id="naCalibrateBtn" class="primary">开始自动校准</button>
