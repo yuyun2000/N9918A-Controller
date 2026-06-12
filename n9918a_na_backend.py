@@ -920,6 +920,8 @@ def save_na_measurement_data(result, filename_prefix=None, output_dir="measureme
     return saved
 
 
+
+
 def export_na_report(result, user_info=None, output_dir="reports"):
     if not result or not result.get("series"):
         raise ValueError("No NA result to export.")
@@ -944,28 +946,27 @@ def export_na_report(result, user_info=None, output_dir="reports"):
     logo_path = Path(__file__).resolve().parent / "assets" / "m5logo2022.png"
 
     with PdfPages(path) as pdf:
-        fig = _build_na_summary_page(plt, result, user_info or {}, logo_path, font)
-        pdf.savefig(fig)
-        plt.close(fig)
+        chart_pages = [
+            _build_na_summary_page(plt, result, user_info or {}, logo_path, font),
+            _build_na_s11_page(plt, result, logo_path, font),
+            _build_na_vswr_page(plt, result, logo_path, font),
+        ]
+        if not result.get("is_full_sweep"):
+            chart_pages.append(_build_na_smith_page(plt, result, logo_path, font))
 
-        fig = _build_na_s11_page(plt, result, logo_path, font)
-        pdf.savefig(fig)
-        plt.close(fig)
+        for fig in chart_pages:
+            pdf.savefig(fig)
+            plt.close(fig)
 
-        fig = _build_na_vswr_page(plt, result, logo_path, font)
-        pdf.savefig(fig)
-        plt.close(fig)
-
-        fig = _build_na_smith_page(plt, result, logo_path, font)
-        pdf.savefig(fig)
-        plt.close(fig)
+        for fig in _build_na_detail_pages(plt, result, user_info or {}, logo_path, font):
+            pdf.savefig(fig)
+            plt.close(fig)
 
         for fig in _build_na_valley_pages(plt, result, logo_path, font):
             pdf.savefig(fig)
             plt.close(fig)
 
     return path
-
 
 def _load_report_font(font_properties_cls):
     for candidate in (
@@ -998,13 +999,193 @@ def _new_report_figure(plt, title, logo_path, font):
     return fig, ax
 
 
+
+
 def _build_na_summary_page(plt, result, user_info, logo_path, font):
-    fig, ax = _new_report_figure(plt, "N9918A NA 天线测量报告", logo_path, font)
+    fig, ax = _new_report_figure(plt, "N9918A NA 天线测量报告总览", logo_path, font)
+    config = result.get("config") or {}
+    primary = result.get("primary_valley") or {}
+    target = result.get("target_summary") or {}
+    bandwidths = result.get("bandwidths") or {}
+    measurement_time = result.get("measurement_time") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    ax.text(
+        0.06,
+        0.855,
+        "工程师优先看图：本报告先给出结论卡片和图表，详细测试信息、端点与候选谷值表集中放在末尾，便于复核和归档。",
+        transform=ax.transAxes,
+        fontsize=10.2,
+        fontproperties=font,
+        color="#1f393f",
+        weight="bold",
+    )
+
+    info_line_1 = f"客户：{user_info.get('customer') or '--'}    产品/EUT：{user_info.get('eut') or '--'}    型号：{user_info.get('model') or '--'}"
+    info_line_2 = f"工程师：{user_info.get('engineer') or '--'}    测试时间：{measurement_time}"
+    info_line_3 = (
+        f"预设：{config.get('name') or result.get('preset_key') or 'NA'}    "
+        f"范围：{format_hz(config.get('start_freq'))} - {format_hz(config.get('stop_freq'))}    "
+        f"点数：{config.get('points', '--')}    IFBW：{format_hz(config.get('ifbw'))}"
+    )
+    ax.text(
+        0.06,
+        0.805,
+        f"{info_line_1}\n{info_line_2}\n{info_line_3}",
+        transform=ax.transAxes,
+        fontsize=8.6,
+        fontproperties=font,
+        color="#455a64",
+        linespacing=1.65,
+        bbox={"boxstyle": "round,pad=0.55", "fc": "#fff8e8", "ec": "#ccd6d8", "lw": 0.7},
+    )
+
+    abs10 = bandwidths.get("absolute_10db") or {}
+    cards = [
+        ("理想频点", _format_mhz(target.get("target_frequency_mhz")), "预设目标频率", "#23744a"),
+        ("中心谷值", _format_mhz(primary.get("frequency_mhz")), "实测最深 S11 谷", "#b7442e"),
+        ("频率偏移", _format_frequency_delta(target), target.get("status_label") or "全扫宽不对比", _target_status_color(target)),
+        ("中心 S11 / RL", _format_s11_rl(primary.get("s11_db")), "RL = -S11", "#0a6a72"),
+        ("中心 VSWR", _format_vswr(primary.get("vswr")), "越接近 1 越好", "#23744a"),
+        ("绝对 -10dB 带宽", format_hz(abs10.get("width_hz")), "S11 <= -10dB 区间" if abs10.get("complete") else "未完整跨过阈值", "#d9822b"),
+    ]
+    _draw_report_card_grid(ax, cards, [0.06, 0.50, 0.88, 0.235], font, columns=3)
+
+    primary_summary = (
+        f"中心谷值位于 {_format_mhz(primary.get('frequency_mhz'))}，"
+        f"S11/回波损耗为 {_format_s11_rl(primary.get('s11_db'))}，"
+        f"VSWR 为 {_format_vswr(primary.get('vswr'))}。"
+    )
+    target_note = _format_target_comparison_note(target)
+    ax.text(
+        0.06,
+        0.425,
+        f"结论摘要：{primary_summary}\n目标对比：{target_note}",
+        transform=ax.transAxes,
+        fontsize=9.0,
+        fontproperties=font,
+        color="#172026",
+        linespacing=1.6,
+        bbox={"boxstyle": "round,pad=0.55", "fc": "#f6f0e2", "ec": "#ccd6d8", "lw": 0.6},
+    )
+
+    flow = [
+        ("01", "S11 曲线", "看中心谷值、-3/-10dB 端点"),
+        ("02", "VSWR 曲线", "看匹配好坏与阈值线"),
+        ("03", "Smith Chart", "看 50Ω 归一化阻抗轨迹" if not result.get("is_full_sweep") else "全扫宽不显示 Smith Chart"),
+        ("04", "末尾表格", "复核测试信息、端点和谷值"),
+    ]
+    _draw_report_flow(ax, flow, [0.06, 0.19, 0.88, 0.16], font)
+    ax.text(
+        0.06,
+        0.115,
+        "说明：S11 为负值，数值越低表示反射越小；回波损耗 RL=-S11，因此不再单独占列。VSWR 由 |Γ|=10^(S11/20) 换算，1:1 为理想匹配。",
+        transform=ax.transAxes,
+        fontsize=8.2,
+        fontproperties=font,
+        color="#60717a",
+        linespacing=1.55,
+    )
+    return fig
+
+
+
+def _format_target_table_note(target_summary):
+    if not target_summary:
+        return "全扫宽或未配置目标频率"
+    return (
+        f"{target_summary.get('status_label') or '--'}；"
+        f"频偏 {_format_frequency_delta(target_summary)}；"
+        f"RL差 {_format_db(target_summary.get('return_loss_delta_db'))}"
+    )
+
+def _target_status_color(target):
+    return {
+        "good": "#23744a",
+        "warn": "#d9822b",
+        "bad": "#b7442e",
+    }.get((target or {}).get("status"), "#60717a")
+
+
+def _draw_report_card_grid(ax, cards, bbox, font, columns=3):
+    try:
+        from matplotlib.patches import FancyBboxPatch
+    except Exception:
+        FancyBboxPatch = None
+
+    x, y, width, height = bbox
+    columns = max(1, int(columns))
+    rows = max(1, (len(cards) + columns - 1) // columns)
+    gap_x = 0.018
+    gap_y = 0.018
+    card_w = (width - gap_x * (columns - 1)) / columns
+    card_h = (height - gap_y * (rows - 1)) / rows
+    for index, (label, value, caption, color) in enumerate(cards):
+        col = index % columns
+        row = index // columns
+        left = x + col * (card_w + gap_x)
+        bottom = y + height - (row + 1) * card_h - row * gap_y
+        if FancyBboxPatch:
+            patch = FancyBboxPatch(
+                (left, bottom),
+                card_w,
+                card_h,
+                boxstyle="round,pad=0.012,rounding_size=0.018",
+                transform=ax.transAxes,
+                facecolor="#fff8e8",
+                edgecolor="#ccd6d8",
+                linewidth=0.8,
+            )
+            ax.add_patch(patch)
+        ax.text(left + 0.018, bottom + card_h - 0.028, label, transform=ax.transAxes, fontsize=7.6, fontproperties=font, color="#60717a")
+        ax.text(left + 0.018, bottom + card_h * 0.45, value or "--", transform=ax.transAxes, fontsize=13.2, fontproperties=font, color=color, weight="bold")
+        ax.text(left + 0.018, bottom + 0.022, caption or "", transform=ax.transAxes, fontsize=7.3, fontproperties=font, color="#455a64")
+
+
+def _draw_report_flow(ax, steps, bbox, font):
+    try:
+        from matplotlib.patches import FancyBboxPatch
+    except Exception:
+        FancyBboxPatch = None
+
+    x, y, width, height = bbox
+    gap = 0.014
+    item_w = (width - gap * (len(steps) - 1)) / max(1, len(steps))
+    for index, (number, title, caption) in enumerate(steps):
+        left = x + index * (item_w + gap)
+        if FancyBboxPatch:
+            patch = FancyBboxPatch(
+                (left, y),
+                item_w,
+                height,
+                boxstyle="round,pad=0.012,rounding_size=0.02",
+                transform=ax.transAxes,
+                facecolor="#f6f0e2",
+                edgecolor="#ccd6d8",
+                linewidth=0.7,
+            )
+            ax.add_patch(patch)
+        ax.text(left + 0.018, y + height - 0.035, number, transform=ax.transAxes, fontsize=8.0, fontproperties=font, color="#d9822b", weight="bold")
+        ax.text(left + 0.018, y + height - 0.074, title, transform=ax.transAxes, fontsize=9.2, fontproperties=font, color="#172026", weight="bold")
+        ax.text(left + 0.018, y + 0.025, caption, transform=ax.transAxes, fontsize=7.3, fontproperties=font, color="#60717a", linespacing=1.25)
+
+
+def _build_na_detail_pages(plt, result, user_info, logo_path, font):
+    pages = []
     config = result.get("config") or {}
     primary = result.get("primary_valley") or {}
     target = result.get("target_summary") or {}
     measurement_time = result.get("measurement_time") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    fig, ax = _new_report_figure(plt, "详细表格与测试口径", logo_path, font)
+    ax.text(
+        0.06,
+        0.855,
+        "本页集中放置报告首页移出的复核表格。工程师先看前面的图，本页用于确认测试条件、理想/实测偏差和带宽端点。",
+        transform=ax.transAxes,
+        fontsize=8.8,
+        fontproperties=font,
+        color="#455a64",
+    )
     info_rows = [
         ["客户", user_info.get("customer", ""), "产品名/EUT", user_info.get("eut", "")],
         ["型号", user_info.get("model", ""), "工程师", user_info.get("engineer", "")],
@@ -1012,32 +1193,15 @@ def _build_na_summary_page(plt, result, user_info, logo_path, font):
         ["天线预设", config.get("name", result.get("preset_key", "NA")), "频率范围", f"{format_hz(config.get('start_freq'))} - {format_hz(config.get('stop_freq'))}"],
         ["扫描点数", str(config.get("points", "--")), "IFBW", format_hz(config.get("ifbw"))],
     ]
-    _draw_report_table(ax, info_rows, [0.06, 0.69, 0.88, 0.17], font, font_size=8.8)
+    _draw_report_table(ax, info_rows, [0.06, 0.69, 0.88, 0.14], font, font_size=8.0)
 
     metric_rows = [
-        ["项目", "频率", "S11 / RL", "VSWR"],
-        [
-            "理想频点",
-            _format_mhz(target.get("target_frequency_mhz")),
-            _format_s11_rl(target.get("target_s11_db")),
-            _format_vswr(target.get("target_vswr")),
-        ],
-        [
-            "实际谷值",
-            _format_mhz(primary.get("frequency_mhz")),
-            _format_s11_rl(primary.get("s11_db")),
-            _format_vswr(primary.get("vswr")),
-        ],
-        [
-            "实际-理想",
-            _format_mhz_delta(target.get("frequency_error_mhz")),
-            _format_s11_rl(target.get("s11_delta_db")),
-            "--",
-        ],
+        ["项目", "频率", "S11 / RL", "VSWR", "说明"],
+        ["理想频点", _format_mhz(target.get("target_frequency_mhz")), _format_s11_rl(target.get("target_s11_db")), _format_vswr(target.get("target_vswr")), "预设目标频率处插值"],
+        ["实际谷值", _format_mhz(primary.get("frequency_mhz")), _format_s11_rl(primary.get("s11_db")), _format_vswr(primary.get("vswr")), "当前频段最深 S11 谷"],
+        ["实际-理想", _format_mhz_delta(target.get("frequency_error_mhz")), _format_s11_rl(target.get("s11_delta_db")), "--", _format_target_table_note(target)],
     ]
-    _draw_report_table(ax, metric_rows, [0.06, 0.57, 0.88, 0.10], font, font_size=7.8, header=True)
-    comparison_note = _format_target_comparison_note(target)
-    ax.text(0.06, 0.535, comparison_note, transform=ax.transAxes, fontsize=8.0, fontproperties=font, color="#455a64")
+    _draw_report_table(ax, metric_rows, [0.06, 0.515, 0.88, 0.145], font, font_size=7.2, header=True)
 
     bandwidth_rows = [["口径", "左端点", "右端点", "带宽", "状态"]]
     for key, title in _bandwidth_titles():
@@ -1051,12 +1215,48 @@ def _build_na_summary_page(plt, result, user_info, logo_path, font):
                 "完整" if bw.get("complete") else "不完整/未跨阈值",
             ]
         )
-    _draw_report_table(ax, bandwidth_rows, [0.06, 0.285, 0.88, 0.235], font, font_size=6.8, header=True)
+    _draw_report_table(ax, bandwidth_rows, [0.06, 0.225, 0.88, 0.245], font, font_size=6.7, header=True)
+    ax.text(
+        0.06,
+        0.145,
+        "表格说明：绝对口径统计 S11<=-3dB 或 <=-10dB 的连续区间；相对口径以中心谷值为基准，\n统计 S11<=谷值+3dB 或 谷值+10dB 的区间。端点由相邻采样点线性插值得到。",
+        transform=ax.transAxes,
+        fontsize=8.0,
+        fontproperties=font,
+        color="#60717a",
+        linespacing=1.5,
+    )
+    pages.append(fig)
+
+    fig, ax = _new_report_figure(plt, "关键频点与目标窗口", logo_path, font)
+    ax.text(
+        0.06,
+        0.855,
+        "关键频点表用于复核图中标注的中心、理想频点和带宽端点；目标窗口表用于查看理想频点附近 ±1% / ±3% 的匹配变化。",
+        transform=ax.transAxes,
+        fontsize=8.8,
+        fontproperties=font,
+        color="#455a64",
+    )
+    point_rows = [["标记", "频率 MHz", "S11 / RL", "VSWR"]]
+    points = result.get("points_of_interest") or []
+    if not points:
+        point_rows.append(["--", "暂无关键频点", "--", "--"])
+    for point in points[:14]:
+        point_rows.append(
+            [
+                point.get("label", ""),
+                _format_mhz(point.get("frequency_mhz")),
+                _format_s11_rl(point.get("s11_db")),
+                _format_vswr(point.get("vswr")),
+            ]
+        )
+    _draw_report_table(ax, point_rows, [0.06, 0.47, 0.88, 0.35], font, font_size=6.9, header=True)
 
     target_rows = [["偏移", "频率", "S11 / RL", "VSWR"]]
     target_window = result.get("target_window") or []
     if not target_window:
-        target_rows.append(["--", "无理想频点", "--", "--"])
+        target_rows.append(["--", "全扫宽或未配置理想频点", "--", "--"])
     for point in target_window:
         target_rows.append(
             [
@@ -1066,15 +1266,24 @@ def _build_na_summary_page(plt, result, user_info, logo_path, font):
                 _format_vswr(point.get("vswr")),
             ]
         )
-    _draw_report_table(ax, target_rows, [0.06, 0.12, 0.88, 0.13], font, font_size=7.0, header=True)
-
-    ax.text(0.06, 0.075, "说明：RL=Return Loss= -S11(dB)；VSWR 由 |Γ|=10^(S11/20) 计算。绝对口径使用 -3/-10dB 阈值，相对口径使用谷值+3/+10dB。", transform=ax.transAxes, fontsize=8.2, fontproperties=font, color="#60717a")
-    return fig
+    _draw_report_table(ax, target_rows, [0.06, 0.20, 0.88, 0.20], font, font_size=7.0, header=True)
+    ax.text(
+        0.06,
+        0.125,
+        "表格说明：S11/RL 合并显示，左侧为仪器回波曲线的 S11(dB)，右侧为回波损耗 RL(dB)。\nVSWR 与两者同步换算，用于快速判断天线匹配是否接近 1:1。",
+        transform=ax.transAxes,
+        fontsize=8.0,
+        fontproperties=font,
+        color="#60717a",
+        linespacing=1.5,
+    )
+    pages.append(fig)
+    return pages
 
 
 def _build_na_s11_page(plt, result, logo_path, font):
     fig, ax_title = _new_report_figure(plt, "S11 曲线与端点标记", logo_path, font)
-    ax = fig.add_axes([0.09, 0.46, 0.84, 0.40])
+    ax = fig.add_axes([0.09, 0.34, 0.84, 0.52])
     series = result.get("series") or {}
     x_vals = series.get("frequency_mhz") or []
     y_vals = series.get("s11_db") or []
@@ -1097,14 +1306,13 @@ def _build_na_s11_page(plt, result, logo_path, font):
         "absolute_10db_left": "#b7442e",
         "absolute_10db_right": "#b7442e",
     }
-    marker_rows = [["标记", "频率", "S11 / RL", "VSWR"]]
     label_points = []
     for point in result.get("points_of_interest", []):
         point_type = point.get("type")
         if point_type not in colors:
             continue
         if point_type in {"center", "target"}:
-            ax.axvline(point.get("frequency_mhz"), color=colors[point_type], linestyle=":", linewidth=1.1)
+            ax.axvline(point.get("frequency_mhz"), color=colors[point_type], linestyle=":" if point_type == "center" else "-.", linewidth=1.1)
         ax.scatter(point.get("frequency_mhz"), point.get("s11_db"), s=38, color=colors[point_type], zorder=5)
         if point_type in {"center", "target", "absolute_3db_left", "absolute_3db_right", "absolute_10db_left", "absolute_10db_right"}:
             label_points.append(
@@ -1116,28 +1324,29 @@ def _build_na_s11_page(plt, result, logo_path, font):
                     "text": _report_marker_label(point, value_key="s11"),
                 }
             )
-        marker_rows.append(
-            [
-                point.get("label", ""),
-                _format_mhz(point.get("frequency_mhz")),
-                _format_s11_rl(point.get("s11_db")),
-                _format_vswr(point.get("vswr")),
-            ]
-        )
 
     ax.set_xlabel("Frequency (MHz)", fontproperties=font)
     ax.set_ylabel("S11 (dB)", fontproperties=font)
     ax.grid(True, alpha=0.25)
     ax.legend(prop=font, loc="best")
     _annotate_report_points(ax, label_points, font)
-    ax_title.text(0.07, 0.405, "图内直接标注中心谷值、理想频点和绝对 -3/-10dB 端点；S11/RL 合并显示，避免重复列占用空间。", transform=ax_title.transAxes, fontsize=8.4, fontproperties=font, color="#60717a")
-    _draw_report_table(ax_title, marker_rows[:8], [0.07, 0.135, 0.86, 0.22], font, font_size=7.0, header=True)
+    ax_title.text(
+        0.07,
+        0.255,
+        "读图说明：中心谷值、理想频点和绝对 -3/-10dB 左右端点直接标在曲线上。\nS11 越负表示回波越小，回波损耗 RL=-S11；详细端点数值见末尾“关键频点与目标窗口”表。",
+        transform=ax_title.transAxes,
+        fontsize=8.6,
+        fontproperties=font,
+        color="#60717a",
+        linespacing=1.55,
+        bbox={"boxstyle": "round,pad=0.45", "fc": "#fff8e8", "ec": "#ccd6d8", "lw": 0.6},
+    )
     return fig
 
 
 def _build_na_vswr_page(plt, result, logo_path, font):
     fig, ax_title = _new_report_figure(plt, "VSWR 驻波比曲线", logo_path, font)
-    ax = fig.add_axes([0.09, 0.46, 0.84, 0.40])
+    ax = fig.add_axes([0.09, 0.34, 0.84, 0.52])
     series = result.get("series") or {}
     x_vals = series.get("frequency_mhz") or []
     y_vals = series.get("vswr") or []
@@ -1170,7 +1379,6 @@ def _build_na_vswr_page(plt, result, logo_path, font):
         "absolute_10db_left": "#b7442e",
         "absolute_10db_right": "#b7442e",
     }
-    marker_rows = [["标记", "频率", "VSWR", "S11 / RL"]]
     label_points = []
     for point in result.get("points_of_interest", []):
         point_type = point.get("type")
@@ -1178,7 +1386,7 @@ def _build_na_vswr_page(plt, result, logo_path, font):
         if point_type not in colors or vswr is None:
             continue
         if point_type in {"center", "target"}:
-            ax.axvline(point.get("frequency_mhz"), color=colors[point_type], linestyle=":", linewidth=1.1)
+            ax.axvline(point.get("frequency_mhz"), color=colors[point_type], linestyle=":" if point_type == "center" else "-.", linewidth=1.1)
         ax.scatter(point.get("frequency_mhz"), min(float(vswr), y_cap), s=38, color=colors[point_type], zorder=5)
         if point_type in {"center", "target", "absolute_3db_left", "absolute_3db_right", "absolute_10db_left", "absolute_10db_right"}:
             label_points.append(
@@ -1190,14 +1398,6 @@ def _build_na_vswr_page(plt, result, logo_path, font):
                     "text": _report_marker_label(point, value_key="vswr"),
                 }
             )
-        marker_rows.append(
-            [
-                point.get("label", ""),
-                _format_mhz(point.get("frequency_mhz")),
-                _format_vswr(vswr),
-                _format_s11_rl(point.get("s11_db")),
-            ]
-        )
 
     ax.set_ylim(1.0, max(1.2, y_cap))
     ax.set_xlabel("Frequency (MHz)", fontproperties=font)
@@ -1205,14 +1405,23 @@ def _build_na_vswr_page(plt, result, logo_path, font):
     ax.grid(True, alpha=0.25)
     ax.legend(prop=font, loc="best")
     _annotate_report_points(ax, label_points, font)
-    ax_title.text(0.07, 0.405, "VSWR 越接近 1 越好；图中标注关键频点，超过绘图上限的点压到上边界，避免曲线不可读。", transform=ax_title.transAxes, fontsize=8.4, fontproperties=font, color="#60717a")
-    _draw_report_table(ax_title, marker_rows[:8], [0.07, 0.135, 0.86, 0.22], font, font_size=7.0, header=True)
+    ax_title.text(
+        0.07,
+        0.255,
+        "读图说明：VSWR 越接近 1 表示匹配越好；图中参考线与 S11=-10dB/-3dB 同步。\n若某些点超过显示上限，会压到图顶端以保持曲线整体可读；详细数值见末尾表格。",
+        transform=ax_title.transAxes,
+        fontsize=8.6,
+        fontproperties=font,
+        color="#60717a",
+        linespacing=1.55,
+        bbox={"boxstyle": "round,pad=0.45", "fc": "#fff8e8", "ec": "#ccd6d8", "lw": 0.6},
+    )
     return fig
 
 
 def _build_na_smith_page(plt, result, logo_path, font):
     fig, ax_title = _new_report_figure(plt, "Smith Chart 与阻抗标记", logo_path, font)
-    ax = fig.add_axes([0.14, 0.45, 0.72, 0.40])
+    ax = fig.add_axes([0.12, 0.30, 0.76, 0.56])
     smith = result.get("smith")
     if not smith:
         ax.axis("off")
@@ -1223,7 +1432,6 @@ def _build_na_smith_page(plt, result, logo_path, font):
     _draw_smith_impedance_grid(ax, reference_ohm, font)
     ax.plot(smith.get("real", []), smith.get("imag", []), color="#0a6a72", linewidth=1.4)
 
-    marker_rows = [["标记", "频率", "阻抗", "S11 / RL", "VSWR"]]
     label_points = []
     for marker in smith.get("markers", []):
         marker_type = marker.get("type")
@@ -1240,15 +1448,6 @@ def _build_na_smith_page(plt, result, logo_path, font):
                 "text": _report_smith_label(marker),
             }
         )
-        marker_rows.append(
-            [
-                marker.get("label", ""),
-                _format_mhz(marker.get("frequency_mhz")),
-                marker.get("impedance_label") or "--",
-                _format_s11_rl(marker.get("s11_db")),
-                _format_vswr(marker.get("vswr")),
-            ]
-        )
 
     ax.set_aspect("equal", adjustable="box")
     ax.set_xlim(-1.05, 1.05)
@@ -1257,22 +1456,42 @@ def _build_na_smith_page(plt, result, logo_path, font):
     ax.set_ylabel("Imag(Γ)", fontproperties=font)
     ax.grid(True, alpha=0.18)
     _annotate_report_points(ax, label_points, font)
-    ax_title.text(0.08, 0.405, f"Smith Chart 由 SDATA? 复数 Γ 自绘，阻抗网格按 {reference_ohm:g}Ω 归一化；图内直接标出关键阻抗。", transform=ax_title.transAxes, fontsize=8.2, fontproperties=font, color="#60717a")
-    _draw_report_table(ax_title, marker_rows, [0.08, 0.135, 0.84, 0.22], font, font_size=7.0, header=True)
+    ax_title.text(
+        0.08,
+        0.225,
+        f"读图说明：Smith Chart 使用 SDATA? 复数 Γ 自绘，阻抗网格按 {reference_ohm:g}Ω 归一化。\n中心、理想频点和 -3dB 左右端点直接标出阻抗；完整阻抗/S11/VSWR 数值见末尾表格。",
+        transform=ax_title.transAxes,
+        fontsize=8.6,
+        fontproperties=font,
+        color="#60717a",
+        linespacing=1.55,
+        bbox={"boxstyle": "round,pad=0.45", "fc": "#fff8e8", "ec": "#ccd6d8", "lw": 0.6},
+    )
     return fig
 
 
 def _build_na_valley_pages(plt, result, logo_path, font):
     valleys = result.get("valleys") or []
     if not valleys:
-        fig, ax = _new_report_figure(plt, "S11 谷值列表", logo_path, font)
+        fig, ax = _new_report_figure(plt, "S11 候选谷值表", logo_path, font)
         ax.text(0.06, 0.72, "暂无谷值数据。", transform=ax.transAxes, fontsize=11, fontproperties=font)
+        ax.text(0.06, 0.64, "表格说明：若未找到局部谷值，请检查扫描范围、点数和天线连接状态。", transform=ax.transAxes, fontsize=8.2, fontproperties=font, color="#60717a")
         return [fig]
 
     pages = []
-    chunk_size = 24
+    chunk_size = 20
     for page_index, start in enumerate(range(0, len(valleys), chunk_size), start=1):
-        fig, ax = _new_report_figure(plt, f"S11 谷值列表 第 {page_index} 页", logo_path, font)
+        fig, ax = _new_report_figure(plt, f"S11 候选谷值表 第 {page_index} 页", logo_path, font)
+        ax.text(
+            0.055,
+            0.855,
+            "表格说明：候选谷值按频率顺序列出，用于复核是否存在多个谐振点；S11/RL 合并显示。\n绝对 -10dB 与相对 +3dB 带宽用于快速筛选可用谷值。",
+            transform=ax.transAxes,
+            fontsize=8.1,
+            fontproperties=font,
+            color="#60717a",
+            linespacing=1.45,
+        )
         rows = [["#", "频率 MHz", "S11 / RL", "VSWR", "绝对-10dB带宽", "相对+3dB带宽"]]
         for index, valley in enumerate(valleys[start:start + chunk_size], start=start + 1):
             abs10 = (valley.get("bandwidths") or {}).get("absolute_10db") or {}
@@ -1287,11 +1506,10 @@ def _build_na_valley_pages(plt, result, logo_path, font):
                     format_hz(rel3.get("width_hz")),
                 ]
             )
-        table_height = min(0.72, max(0.14, 0.036 * len(rows)))
-        _draw_report_table(ax, rows, [0.055, 0.84 - table_height, 0.89, table_height], font, font_size=7.0, header=True)
+        table_height = min(0.66, max(0.14, 0.034 * len(rows)))
+        _draw_report_table(ax, rows, [0.055, 0.80 - table_height, 0.89, table_height], font, font_size=7.0, header=True)
         pages.append(fig)
     return pages
-
 
 def _draw_report_table(ax, rows, bbox, font, font_size=8.0, header=False):
     table = ax.table(cellText=rows, bbox=bbox, cellLoc="left")

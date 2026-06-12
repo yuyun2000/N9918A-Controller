@@ -521,7 +521,7 @@ function renderVswr(series, points = []) {
 }
 
 function renderSmith(smith, isFullSweep) {
-  const { ctx, width, height } = prepareCanvas(elements.smithCanvas, 520, 420);
+  const { ctx, width, height } = prepareCanvas(elements.smithCanvas, 820, 540);
   ctx.clearRect(0, 0, width, height);
   const size = Math.min(width, height) * 0.78;
   const cx = width / 2;
