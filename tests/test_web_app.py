@@ -310,10 +310,14 @@ class WebAppSmokeTest(unittest.TestCase):
 
         presets = self.client.get("/api/na/presets").get_json()
         self.assertTrue(presets["ok"], presets)
+        self.assertIn("ANT_315", presets["data"])
         self.assertIn("ANT_433", presets["data"])
         self.assertIn("ANT_868", presets["data"])
         self.assertNotIn("ANT_898", presets["data"])
         self.assertIn("ANT_FULL", presets["data"])
+        self.assertEqual(presets["data"]["ANT_315"]["start_freq"], 215e6)
+        self.assertEqual(presets["data"]["ANT_315"]["stop_freq"], 415e6)
+        self.assertEqual(presets["data"]["ANT_315"]["target_freq"], 315e6)
         self.assertEqual(presets["data"]["ANT_868"]["start_freq"], 768e6)
         self.assertEqual(presets["data"]["ANT_868"]["stop_freq"], 968e6)
 

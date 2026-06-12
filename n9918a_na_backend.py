@@ -28,6 +28,17 @@ except ImportError:  # pragma: no cover - depends on local hardware environment.
 
 
 NA_PRESET_CONFIGS = {
+    "ANT_315": {
+        "name": "315MHz 天线",
+        "label": "315MHz",
+        "start_freq": 215e6,
+        "stop_freq": 415e6,
+        "target_freq": 315e6,
+        "points": 2001,
+        "ifbw": 10e3,
+        "full_sweep": False,
+        "description": "215-415MHz，适合 315MHz 天线调试。",
+    },
     "ANT_433": {
         "name": "433MHz 天线",
         "label": "433MHz",
