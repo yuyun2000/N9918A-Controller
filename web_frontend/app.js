@@ -72,8 +72,10 @@ const elements = {
   naS11Canvas: $("naS11Canvas"),
   smithCanvas: $("smithCanvas"),
   naPrimaryText: $("naPrimaryText"),
+  naTargetText: $("naTargetText"),
   bandwidthGrid: $("bandwidthGrid"),
   pointRows: $("pointRows"),
+  targetRows: $("targetRows"),
   valleyRows: $("valleyRows"),
   valleyPrevBtn: $("valleyPrevBtn"),
   valleyNextBtn: $("valleyNextBtn"),
@@ -242,22 +244,28 @@ function renderSwitch(status) {
   for (const switchName of ["A", "B", "C", "D"]) {
     const module = elements.switchGrid.querySelector(`[data-switch="${switchName}"]`);
     if (module) {
-      module.querySelector("strong").textContent = `${switchName} / 位置 ${positions[switchName] || "--"}`;
+      const position = positions[switchName] || "--";
+      module.dataset.currentPosition = position;
+      module.querySelector("strong").textContent = `${switchName} / 位置 ${position}`;
+      module.querySelectorAll("button").forEach((button) => {
+        button.classList.toggle("active", String(position) === button.dataset.pos);
+      });
     }
   }
 }
 
 function createSwitchControls() {
   elements.switchGrid.innerHTML = "";
-  for (const switchName of ["A", "B", "C", "D"]) {
+  const switchOrder = ["A", "B", "D", "C"];
+  for (const switchName of switchOrder) {
     const module = document.createElement("div");
     module.className = "switch-module";
     module.dataset.switch = switchName;
     module.innerHTML = `
       <strong>${switchName} / 位置 --</strong>
       <div>
-        <button data-pos="1">位置 1</button>
-        <button data-pos="2">位置 2</button>
+        <button class="switch-pos pos-one" data-pos="1"><span></span>位置 1</button>
+        <button class="switch-pos pos-two" data-pos="2"><span></span>位置 2</button>
       </div>
     `;
     module.querySelectorAll("button").forEach((button) => {
@@ -382,12 +390,26 @@ function renderNaS11(series, primaryValley, bandwidths = {}, points = []) {
 
   const pointColors = {
     center: "#b7442e",
+    target: "#23744a",
     absolute_3db_left: "#d9822b",
     absolute_3db_right: "#d9822b",
     absolute_10db_left: "#b7442e",
     absolute_10db_right: "#b7442e",
   };
   const plottedPoints = (points || []).filter((point) => pointColors[point.type]);
+  const centerPoint = plottedPoints.find((point) => point.type === "center");
+  const targetPoint = plottedPoints.find((point) => point.type === "target");
+  if (targetPoint) {
+    const px = x(targetPoint.frequency_mhz);
+    drawVertical(ctx, px, pad.top, height - pad.bottom, pointColors.target, [6, 5]);
+    drawTag(ctx, `理想 ${targetPoint.frequency_mhz.toFixed(3)}MHz / RL ${formatDb(targetPoint.return_loss_db)}`, clamp(px + 8, pad.left, width - 260), pad.top + 10, pointColors.target);
+  }
+  if (centerPoint) {
+    const px = x(centerPoint.frequency_mhz);
+    drawVertical(ctx, px, pad.top, height - pad.bottom, pointColors.center, [2, 4]);
+    const yOffset = targetPoint && Math.abs(x(targetPoint.frequency_mhz) - px) < 180 ? 44 : 10;
+    drawTag(ctx, `实际 ${centerPoint.frequency_mhz.toFixed(3)}MHz / RL ${formatDb(centerPoint.return_loss_db)}`, clamp(px + 8, pad.left, width - 260), pad.top + yOffset, pointColors.center);
+  }
   for (const point of plottedPoints) {
     const px = x(point.frequency_mhz);
     const py = y(point.s11_db);
@@ -395,12 +417,6 @@ function renderNaS11(series, primaryValley, bandwidths = {}, points = []) {
     ctx.beginPath();
     ctx.arc(px, py, point.type === "center" ? 6 : 4.5, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = "#172026";
-    ctx.font = "13px Bahnschrift, sans-serif";
-    const label = point.type === "center"
-      ? `${point.frequency_mhz.toFixed(3)} MHz / S11 ${point.s11_db.toFixed(2)} dB / VSWR ${formatVswr(point.vswr)}`
-      : `${point.label} ${point.frequency_mhz.toFixed(3)} MHz`;
-    ctx.fillText(label, px + 10, py - 8);
   }
 
   if (!plottedPoints.length && primaryValley) {
@@ -501,6 +517,43 @@ function renderBandwidths(data) {
   }
 }
 
+function renderTargetSummary(summary) {
+  if (!summary) {
+    elements.naTargetText.className = "target-compare";
+    elements.naTargetText.textContent = "暂无理想频点对比。";
+    return;
+  }
+  elements.naTargetText.className = `target-compare ${summary.status || "unknown"}`;
+  const errorText = summary.frequency_error_mhz == null
+    ? "--"
+    : `${summary.frequency_error_mhz >= 0 ? "+" : ""}${Number(summary.frequency_error_mhz).toFixed(3)} MHz`;
+  const rlDelta = summary.return_loss_delta_db == null
+    ? "--"
+    : `${summary.return_loss_delta_db >= 0 ? "+" : ""}${Number(summary.return_loss_delta_db).toFixed(2)} dB`;
+  elements.naTargetText.textContent =
+    `理想 ${Number(summary.target_frequency_mhz).toFixed(3)} MHz：S11 ${formatDb(summary.target_s11_db)} / RL ${formatDb(summary.target_return_loss_db)} / VSWR ${formatVswr(summary.target_vswr)}；` +
+    `实际谷值偏移 ${errorText}，实际谷值相对理想频点回波损耗差 ${rlDelta}，${summary.status_label || "暂无判定"}`;
+}
+
+function renderTargetWindow(points = []) {
+  elements.targetRows.innerHTML = "";
+  if (!points.length) {
+    elements.targetRows.innerHTML = `<tr><td colspan="5">暂无理想频点附近数据</td></tr>`;
+    return;
+  }
+  for (const point of points) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${point.offset_percent > 0 ? "+" : ""}${Number(point.offset_percent).toFixed(0)}%</td>
+      <td>${Number(point.frequency_mhz).toFixed(6)}</td>
+      <td>${formatDb(point.s11_db)}</td>
+      <td>${formatDb(point.return_loss_db)}</td>
+      <td>${formatVswr(point.vswr)}</td>
+    `;
+    elements.targetRows.append(tr);
+  }
+}
+
 function renderPoints(points = []) {
   elements.pointRows.innerHTML = "";
   if (!points.length) {
@@ -509,14 +562,15 @@ function renderPoints(points = []) {
   }
   const preferredOrder = {
     center: 0,
-    absolute_3db_left: 1,
-    absolute_3db_right: 2,
-    absolute_10db_left: 3,
-    absolute_10db_right: 4,
-    relative_3db_left: 5,
-    relative_3db_right: 6,
-    relative_10db_left: 7,
-    relative_10db_right: 8,
+    target: 1,
+    absolute_3db_left: 2,
+    absolute_3db_right: 3,
+    absolute_10db_left: 4,
+    absolute_10db_right: 5,
+    relative_3db_left: 6,
+    relative_3db_right: 7,
+    relative_10db_left: 8,
+    relative_10db_right: 9,
   };
   const rows = [...points].sort((a, b) => (preferredOrder[a.type] ?? 99) - (preferredOrder[b.type] ?? 99));
   for (const point of rows) {
@@ -593,7 +647,9 @@ function renderNaStatus(data) {
   renderNaS11(data.series, data.primary_valley, data.bandwidths, data.points_of_interest);
   renderSmith(data.smith, data.is_full_sweep);
   renderBandwidths(data);
+  renderTargetSummary(data.target_summary);
   renderPoints(data.points_of_interest || []);
+  renderTargetWindow(data.target_window || []);
   renderValleys(data.valleys || []);
 }
 
@@ -862,6 +918,45 @@ function drawHorizontal(ctx, y, left, right, color, dash = []) {
   ctx.restore();
 }
 
+function drawVertical(ctx, x, top, bottom, color, dash = []) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.25;
+  ctx.setLineDash(dash);
+  ctx.beginPath();
+  ctx.moveTo(x, top);
+  ctx.lineTo(x, bottom);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawTag(ctx, text, x, y, color) {
+  ctx.save();
+  ctx.font = "12px Bahnschrift, sans-serif";
+  const width = ctx.measureText(text).width + 16;
+  const height = 24;
+  ctx.fillStyle = "rgba(255, 248, 232, 0.93)";
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  roundRect(ctx, x, y, width, height, 9);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.fillText(text, x + 8, y + 16);
+  ctx.restore();
+}
+
+function roundRect(ctx, x, y, width, height, radius) {
+  const r = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + width, y, x + width, y + height, r);
+  ctx.arcTo(x + width, y + height, x, y + height, r);
+  ctx.arcTo(x, y + height, x, y, r);
+  ctx.arcTo(x, y, x + width, y, r);
+  ctx.closePath();
+}
+
 function drawAxisLabels(ctx, width, height, pad, leftLabel, rightLabel, yLabel) {
   ctx.fillStyle = "#60717a";
   ctx.font = "12px Cascadia Code, monospace";
@@ -872,6 +967,10 @@ function drawAxisLabels(ctx, width, height, pad, leftLabel, rightLabel, yLabel) 
   ctx.rotate(-Math.PI / 2);
   ctx.fillText(yLabel, 0, 0);
   ctx.restore();
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
 }
 
 function formatHz(value) {

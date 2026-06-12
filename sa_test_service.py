@@ -830,6 +830,8 @@ class SATestService:
                 "primary_valley": result.get("primary_valley"),
                 "bandwidths": result.get("bandwidths") or {},
                 "points_of_interest": result.get("points_of_interest") or [],
+                "target_summary": result.get("target_summary"),
+                "target_window": result.get("target_window") or [],
                 "valleys": result.get("valleys") or [],
                 "config": result.get("config") or self.na_config,
                 "is_full_sweep": bool(result.get("is_full_sweep") or (self.na_config or {}).get("full_sweep")),

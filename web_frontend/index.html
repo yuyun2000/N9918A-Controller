@@ -88,7 +88,7 @@
           </div>
           <div class="report-form">
             <label>客户<input id="customer" value="M5Stack" /></label>
-            <label>被测设备<input id="eut" value="产品A" /></label>
+            <label>产品名 / EUT<input id="eut" value="产品A" /></label>
             <label>型号<input id="model" value="Model-X" /></label>
             <label>工程师<input id="engineer" value="张工程师" /></label>
             <label class="full">备注<input id="remark" value="首次测试" /></label>
@@ -248,7 +248,7 @@
             <span><i class="line measured"></i>S11 dB</span>
             <span><i class="line threshold3"></i>-3dB / +3dB</span>
             <span><i class="line threshold10"></i>-10dB / +10dB</span>
-            <span><i class="dot"></i>谷值</span>
+            <span><i class="dot"></i>实际谷值 / 理想频点</span>
           </div>
         </section>
 
@@ -259,6 +259,7 @@
             <button class="help-button" type="button" aria-label="双口径带宽说明" data-help="绝对口径：统计 S11<=-3dB 或 <=-10dB 的连续区间；相对口径：以中心谷值为基准，统计 S11<=谷值+3dB 或 谷值+10dB 的区间。端点用线性插值估算。">?</button>
           </div>
           <div class="primary-valley" id="naPrimaryText">暂无中心谷值。</div>
+          <div class="target-compare" id="naTargetText">暂无理想频点对比。</div>
           <div class="bandwidth-grid" id="bandwidthGrid"></div>
         </section>
 
@@ -283,6 +284,25 @@
                 <tr><td colspan="5">暂无中心或端点数据</td></tr>
               </tbody>
             </table>
+          </div>
+          <div class="target-window-block">
+            <h3>理想频点附近损耗</h3>
+            <div class="table-wrap compact-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>偏移</th>
+                    <th>频率 MHz</th>
+                    <th>S11 dB</th>
+                    <th>回波损耗 dB</th>
+                    <th>VSWR</th>
+                  </tr>
+                </thead>
+                <tbody id="targetRows">
+                  <tr><td colspan="5">暂无理想频点附近数据</td></tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </section>
 

@@ -103,8 +103,14 @@ class WebAppSmokeTest(unittest.TestCase):
             self.assertIn("回波损耗".encode("utf-8"), page.data)
             self.assertIn("VSWR".encode("utf-8"), page.data)
             self.assertIn("中心与带宽端点详情".encode("utf-8"), page.data)
+            self.assertIn("理想频点附近损耗".encode("utf-8"), page.data)
         finally:
             page.close()
+
+        app_js = (ROOT / "web_frontend" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('const switchOrder = ["A", "B", "D", "C"];', app_js)
+        self.assertIn("pos-one", app_js)
+        self.assertIn("pos-two", app_js)
 
         presets = self.client.get("/api/presets").get_json()
         self.assertTrue(presets["ok"])
@@ -261,6 +267,9 @@ class WebAppSmokeTest(unittest.TestCase):
         self.assertIn("return_loss_db", data["primary_valley"])
         self.assertIn("vswr", data["primary_valley"])
         self.assertTrue(data["points_of_interest"])
+        self.assertTrue(data["target_summary"])
+        self.assertTrue(data["target_window"])
+        self.assertAlmostEqual(data["target_summary"]["target_frequency_mhz"], 433.0)
         self.assertGreater(len(data["valleys"]), 0)
 
     def test_na_save_and_report_export_in_demo(self):
@@ -356,7 +365,7 @@ class NAAlgorithmTest(unittest.TestCase):
             s11_db,
             real,
             imag,
-            {"start_freq": 0, "stop_freq": 4e6, "points": 5, "full_sweep": False},
+            {"start_freq": 0, "stop_freq": 4e6, "points": 5, "full_sweep": False, "target_freq": 2e6},
             "TEST",
         )
 
@@ -368,6 +377,11 @@ class NAAlgorithmTest(unittest.TestCase):
         self.assertAlmostEqual(result["bandwidths"]["absolute_10db"]["right_hz"], 2.666667e6, delta=2)
         self.assertAlmostEqual(result["bandwidths"]["absolute_10db"]["left_vswr"], 1.925, places=3)
         self.assertAlmostEqual(result["bandwidths"]["relative_3db"]["width_hz"], 0.4e6, delta=2)
+        self.assertAlmostEqual(result["target_summary"]["target_frequency_mhz"], 2.0)
+        self.assertAlmostEqual(result["target_summary"]["frequency_error_mhz"], 0.0)
+        self.assertEqual(result["target_summary"]["status"], "good")
+        self.assertEqual(result["points_of_interest"][1]["type"], "target")
+        self.assertTrue(result["target_window"])
         self.assertTrue(result["points_of_interest"])
         self.assertTrue(result["smith"]["markers"])
 

@@ -33,6 +33,7 @@ NA_PRESET_CONFIGS = {
         "label": "433MHz",
         "start_freq": 300e6,
         "stop_freq": 500e6,
+        "target_freq": 433e6,
         "points": 2001,
         "ifbw": 10e3,
         "full_sweep": False,
@@ -43,6 +44,7 @@ NA_PRESET_CONFIGS = {
         "label": "868MHz",
         "start_freq": 768e6,
         "stop_freq": 968e6,
+        "target_freq": 868e6,
         "points": 2001,
         "ifbw": 10e3,
         "full_sweep": False,
@@ -53,6 +55,7 @@ NA_PRESET_CONFIGS = {
         "label": "915MHz",
         "start_freq": 815e6,
         "stop_freq": 1015e6,
+        "target_freq": 915e6,
         "points": 2001,
         "ifbw": 10e3,
         "full_sweep": False,
@@ -63,6 +66,7 @@ NA_PRESET_CONFIGS = {
         "label": "2450MHz",
         "start_freq": 2.2e9,
         "stop_freq": 2.7e9,
+        "target_freq": 2450e6,
         "points": 2001,
         "ifbw": 10e3,
         "full_sweep": False,
@@ -73,6 +77,7 @@ NA_PRESET_CONFIGS = {
         "label": "5GHz",
         "start_freq": 4.8e9,
         "stop_freq": 6.0e9,
+        "target_freq": 5.0e9,
         "points": 2001,
         "ifbw": 10e3,
         "full_sweep": False,
@@ -83,6 +88,7 @@ NA_PRESET_CONFIGS = {
         "label": "全扫宽",
         "start_freq": 30e3,
         "stop_freq": 26.5e9,
+        "target_freq": None,
         "points": 5001,
         "ifbw": 10e3,
         "full_sweep": True,
@@ -354,7 +360,7 @@ def frequency_axis(start_hz, stop_hz, points):
     return [float(start_hz) + step * i for i in range(points)]
 
 
-def find_s11_valleys(frequencies, s11_db, min_separation_points=4, max_valleys=None):
+def find_s11_valleys(frequencies, s11_db, min_separation_points=4, max_valleys=None, min_prominence_db=0.3):
     if not frequencies or not s11_db or len(frequencies) != len(s11_db):
         return []
     if len(s11_db) < 3:
@@ -373,6 +379,10 @@ def find_s11_valleys(frequencies, s11_db, min_separation_points=4, max_valleys=N
     if not candidates:
         idx = min(range(len(s11_db)), key=lambda i: s11_db[i])
         candidates = [(idx, 0.0, s11_db[idx])]
+    else:
+        meaningful = [item for item in candidates if item[1] >= min_prominence_db]
+        if meaningful:
+            candidates = meaningful
 
     candidates.sort(key=lambda item: (item[2], -item[1]))
     selected = []
@@ -642,6 +652,106 @@ def build_points_of_interest(frequencies, s11_db, primary_valley_with_index, ban
     return points
 
 
+def build_target_summary(frequencies, s11_db, config, primary_valley_with_index):
+    target_hz = (config or {}).get("target_freq")
+    if target_hz is None or not frequencies or not s11_db:
+        return None
+    target_hz = float(target_hz)
+    if target_hz < frequencies[0] or target_hz > frequencies[-1]:
+        return None
+
+    target_s11 = interpolate_series(frequencies, s11_db, target_hz)
+    target_point = metric_point("理想频点", target_hz, target_s11, "target")
+    if not target_point:
+        return None
+
+    summary = {
+        **target_point,
+        "target_frequency_hz": target_hz,
+        "target_frequency_mhz": target_hz / 1e6,
+        "target_s11_db": target_point["s11_db"],
+        "target_return_loss_db": target_point["return_loss_db"],
+        "target_vswr": target_point["vswr"],
+    }
+    if primary_valley_with_index:
+        idx = primary_valley_with_index["index"]
+        actual_hz = frequencies[idx]
+        actual_s11 = s11_db[idx]
+        error_hz = actual_hz - target_hz
+        target_return_loss = target_point["return_loss_db"]
+        actual_return_loss = return_loss_from_s11_db(actual_s11)
+        error_percent = (error_hz / target_hz * 100.0) if target_hz else 0.0
+        summary.update(
+            {
+                "actual_frequency_hz": actual_hz,
+                "actual_frequency_mhz": actual_hz / 1e6,
+                "actual_s11_db": actual_s11,
+                "actual_return_loss_db": actual_return_loss,
+                "actual_vswr": vswr_from_s11_db(actual_s11),
+                "frequency_error_hz": error_hz,
+                "frequency_error_mhz": error_hz / 1e6,
+                "abs_frequency_error_hz": abs(error_hz),
+                "abs_frequency_error_mhz": abs(error_hz) / 1e6,
+                "frequency_error_percent": error_percent,
+                "abs_frequency_error_percent": abs(error_percent),
+                "s11_delta_db": actual_s11 - target_s11,
+                "return_loss_delta_db": (
+                    round(actual_return_loss - target_return_loss, 4)
+                    if actual_return_loss is not None and target_return_loss is not None
+                    else None
+                ),
+            }
+        )
+        summary["status"] = target_match_status(summary)
+    else:
+        summary["status"] = "unknown"
+    summary["status_label"] = {
+        "good": "接近理想",
+        "warn": "轻微偏移",
+        "bad": "明显偏移",
+        "unknown": "暂无实际谷值",
+    }.get(summary["status"], "暂无实际谷值")
+    return summary
+
+
+def build_target_window(frequencies, s11_db, config):
+    target_hz = (config or {}).get("target_freq")
+    if target_hz is None or not frequencies or not s11_db:
+        return []
+    target_hz = float(target_hz)
+    points = []
+    for offset_percent in (-3.0, -1.0, 0.0, 1.0, 3.0):
+        freq_hz = target_hz * (1.0 + offset_percent / 100.0)
+        if freq_hz < frequencies[0] or freq_hz > frequencies[-1]:
+            continue
+        s11_value = interpolate_series(frequencies, s11_db, freq_hz)
+        point = metric_point(
+            f"{offset_percent:+.0f}%",
+            freq_hz,
+            s11_value,
+            "target_window",
+        )
+        if point:
+            point["offset_percent"] = offset_percent
+            point["offset_mhz"] = (freq_hz - target_hz) / 1e6
+            points.append(point)
+    return points
+
+
+def target_match_status(summary):
+    if not summary:
+        return "unknown"
+    error_percent = summary.get("abs_frequency_error_percent")
+    target_return_loss = summary.get("target_return_loss_db")
+    if error_percent is None:
+        return "unknown"
+    if error_percent <= 1.0 and (target_return_loss is None or target_return_loss >= 10.0):
+        return "good"
+    if error_percent <= 3.0 and (target_return_loss is None or target_return_loss >= 6.0):
+        return "warn"
+    return "bad"
+
+
 def build_na_result(frequencies, s11_db, real=None, imag=None, config=None, preset_key=None):
     frequencies = [float(v) for v in frequencies]
     s11_db = [float(v) for v in s11_db]
@@ -660,6 +770,13 @@ def build_na_result(frequencies, s11_db, real=None, imag=None, config=None, pres
     primary = choose_primary_valley(valleys)
     bandwidths = calculate_all_bandwidths(frequencies, s11_db, primary_with_index)
     points_of_interest = build_points_of_interest(frequencies, s11_db, primary_with_index, bandwidths)
+    target_summary = build_target_summary(frequencies, s11_db, config, primary_with_index)
+    target_window = build_target_window(frequencies, s11_db, config)
+    if target_summary:
+        points_of_interest.insert(
+            1 if primary_with_index else 0,
+            metric_point("理想频点", target_summary["target_frequency_hz"], target_summary["target_s11_db"], "target"),
+        )
 
     valleys_payload = []
     for valley in valleys:
@@ -682,6 +799,8 @@ def build_na_result(frequencies, s11_db, real=None, imag=None, config=None, pres
         "primary_valley": primary,
         "bandwidths": bandwidths,
         "points_of_interest": points_of_interest,
+        "target_summary": target_summary,
+        "target_window": target_window,
         "valleys": valleys_payload,
         "is_full_sweep": full_sweep,
         "measurement_time": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -757,19 +876,19 @@ def export_na_report(result, user_info=None, output_dir="reports"):
 
     with PdfPages(path) as pdf:
         fig = _build_na_summary_page(plt, result, user_info or {}, logo_path, font)
-        pdf.savefig(fig, bbox_inches="tight")
+        pdf.savefig(fig)
         plt.close(fig)
 
         fig = _build_na_s11_page(plt, result, logo_path, font)
-        pdf.savefig(fig, bbox_inches="tight")
+        pdf.savefig(fig)
         plt.close(fig)
 
         fig = _build_na_smith_page(plt, result, logo_path, font)
-        pdf.savefig(fig, bbox_inches="tight")
+        pdf.savefig(fig)
         plt.close(fig)
 
         for fig in _build_na_valley_pages(plt, result, logo_path, font):
-            pdf.savefig(fig, bbox_inches="tight")
+            pdf.savefig(fig)
             plt.close(fig)
 
     return path
@@ -788,20 +907,21 @@ def _load_report_font(font_properties_cls):
 
 
 def _new_report_figure(plt, title, logo_path, font):
-    fig = plt.figure(figsize=(11.69, 8.27))
+    # Match the SA report's A4 portrait footprint while keeping matplotlib as a no-ReportLab fallback.
+    fig = plt.figure(figsize=(8.27, 11.69))
     ax = fig.add_axes([0, 0, 1, 1])
     ax.axis("off")
     if logo_path.exists():
         try:
             image = plt.imread(str(logo_path))
-            logo_ax = fig.add_axes([0.055, 0.885, 0.095, 0.08])
+            logo_ax = fig.add_axes([0.065, 0.91, 0.09, 0.065])
             logo_ax.imshow(image)
             logo_ax.axis("off")
         except Exception:
             pass
-    ax.text(0.16, 0.94, title, fontsize=21, fontproperties=font, weight="bold", color="#172026")
-    ax.text(0.16, 0.902, "M5Stack Technology Co., Ltd / N9918A FieldFox", fontsize=10.5, fontproperties=font, color="#60717a")
-    ax.plot([0.055, 0.945], [0.875, 0.875], color="#1f393f", linewidth=1.2)
+    ax.text(0.18, 0.952, title, transform=ax.transAxes, fontsize=19, fontproperties=font, weight="bold", color="#172026")
+    ax.text(0.18, 0.925, "M5Stack Technology Co., Ltd / N9918A FieldFox", transform=ax.transAxes, fontsize=9.5, fontproperties=font, color="#60717a")
+    ax.plot([0.06, 0.94], [0.895, 0.895], transform=ax.transAxes, color="#1f393f", linewidth=1.0)
     return fig, ax
 
 
@@ -809,6 +929,7 @@ def _build_na_summary_page(plt, result, user_info, logo_path, font):
     fig, ax = _new_report_figure(plt, "N9918A NA 天线测量报告", logo_path, font)
     config = result.get("config") or {}
     primary = result.get("primary_valley") or {}
+    target = result.get("target_summary") or {}
     measurement_time = result.get("measurement_time") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     info_rows = [
@@ -818,41 +939,73 @@ def _build_na_summary_page(plt, result, user_info, logo_path, font):
         ["天线预设", config.get("name", result.get("preset_key", "NA")), "频率范围", f"{format_hz(config.get('start_freq'))} - {format_hz(config.get('stop_freq'))}"],
         ["扫描点数", str(config.get("points", "--")), "IFBW", format_hz(config.get("ifbw"))],
     ]
-    _draw_report_table(ax, info_rows, [0.06, 0.62, 0.88, 0.22], font, font_size=9.2)
+    _draw_report_table(ax, info_rows, [0.06, 0.69, 0.88, 0.17], font, font_size=8.8)
 
     metric_rows = [
-        ["中心频率", _format_mhz(primary.get("frequency_mhz")), "S11", _format_db(primary.get("s11_db"))],
-        ["回波损耗", _format_db(primary.get("return_loss_db")), "驻波比 VSWR", _format_vswr(primary.get("vswr"))],
+        ["项目", "频率", "S11", "回波损耗", "VSWR"],
+        [
+            "理想频点",
+            _format_mhz(target.get("target_frequency_mhz")),
+            _format_db(target.get("target_s11_db")),
+            _format_db(target.get("target_return_loss_db")),
+            _format_vswr(target.get("target_vswr")),
+        ],
+        [
+            "实际谷值",
+            _format_mhz(primary.get("frequency_mhz")),
+            _format_db(primary.get("s11_db")),
+            _format_db(primary.get("return_loss_db")),
+            _format_vswr(primary.get("vswr")),
+        ],
+        [
+            "实际-理想",
+            _format_mhz_delta(target.get("frequency_error_mhz")),
+            _format_db(target.get("s11_delta_db")),
+            _format_db(target.get("return_loss_delta_db")),
+            "--",
+        ],
     ]
-    _draw_report_table(ax, metric_rows, [0.06, 0.49, 0.88, 0.09], font, font_size=10)
+    _draw_report_table(ax, metric_rows, [0.06, 0.57, 0.88, 0.10], font, font_size=8.0, header=True)
+    comparison_note = _format_target_comparison_note(target)
+    ax.text(0.06, 0.535, comparison_note, transform=ax.transAxes, fontsize=8.0, fontproperties=font, color="#455a64")
 
-    bandwidth_rows = [["口径", "左频率", "左S11", "左RL", "左VSWR", "右频率", "右S11", "右RL", "右VSWR", "带宽", "状态"]]
+    bandwidth_rows = [["口径", "左端点", "右端点", "带宽", "状态"]]
     for key, title in _bandwidth_titles():
         bw = (result.get("bandwidths") or {}).get(key) or {}
         bandwidth_rows.append(
             [
                 title,
-                format_hz(bw.get("left_hz")),
-                _format_db(bw.get("left_s11_db")),
-                _format_db(bw.get("left_return_loss_db")),
-                _format_vswr(bw.get("left_vswr")),
-                format_hz(bw.get("right_hz")),
-                _format_db(bw.get("right_s11_db")),
-                _format_db(bw.get("right_return_loss_db")),
-                _format_vswr(bw.get("right_vswr")),
+                _format_endpoint_cell(bw, "left"),
+                _format_endpoint_cell(bw, "right"),
                 format_hz(bw.get("width_hz")),
                 "完整" if bw.get("complete") else "不完整/未跨阈值",
             ]
         )
-    _draw_report_table(ax, bandwidth_rows, [0.035, 0.18, 0.93, 0.24], font, font_size=6.8, header=True)
+    _draw_report_table(ax, bandwidth_rows, [0.06, 0.285, 0.88, 0.235], font, font_size=6.8, header=True)
 
-    ax.text(0.06, 0.115, "说明：RL=Return Loss= -S11(dB)；VSWR 由 |Γ|=10^(S11/20) 计算。绝对口径使用 -3/-10dB 阈值，相对口径使用谷值+3/+10dB。", fontsize=9, fontproperties=font, color="#60717a")
+    target_rows = [["偏移", "频率", "S11", "回波损耗", "VSWR"]]
+    target_window = result.get("target_window") or []
+    if not target_window:
+        target_rows.append(["--", "无理想频点", "--", "--", "--"])
+    for point in target_window:
+        target_rows.append(
+            [
+                _format_percent(point.get("offset_percent")),
+                _format_mhz(point.get("frequency_mhz")),
+                _format_db(point.get("s11_db")),
+                _format_db(point.get("return_loss_db")),
+                _format_vswr(point.get("vswr")),
+            ]
+        )
+    _draw_report_table(ax, target_rows, [0.06, 0.12, 0.88, 0.13], font, font_size=7.0, header=True)
+
+    ax.text(0.06, 0.075, "说明：RL=Return Loss= -S11(dB)；VSWR 由 |Γ|=10^(S11/20) 计算。绝对口径使用 -3/-10dB 阈值，相对口径使用谷值+3/+10dB。", transform=ax.transAxes, fontsize=8.2, fontproperties=font, color="#60717a")
     return fig
 
 
 def _build_na_s11_page(plt, result, logo_path, font):
     fig, ax_title = _new_report_figure(plt, "S11 曲线与端点标记", logo_path, font)
-    ax = fig.add_axes([0.08, 0.18, 0.84, 0.62])
+    ax = fig.add_axes([0.10, 0.40, 0.82, 0.42])
     series = result.get("series") or {}
     x_vals = series.get("frequency_mhz") or []
     y_vals = series.get("s11_db") or []
@@ -869,36 +1022,42 @@ def _build_na_s11_page(plt, result, logo_path, font):
 
     colors = {
         "center": "#b7442e",
+        "target": "#23744a",
         "absolute_3db_left": "#d9822b",
         "absolute_3db_right": "#d9822b",
         "absolute_10db_left": "#b7442e",
         "absolute_10db_right": "#b7442e",
     }
+    marker_rows = [["标记", "频率", "S11", "RL", "VSWR"]]
     for point in result.get("points_of_interest", []):
         point_type = point.get("type")
         if point_type not in colors:
             continue
+        if point_type in {"center", "target"}:
+            ax.axvline(point.get("frequency_mhz"), color=colors[point_type], linestyle=":", linewidth=1.1)
         ax.scatter(point.get("frequency_mhz"), point.get("s11_db"), s=38, color=colors[point_type], zorder=5)
-        ax.annotate(
-            f"{point.get('label')}\n{point.get('frequency_mhz'):.3f}MHz\nVSWR {_format_vswr(point.get('vswr'))}",
-            (point.get("frequency_mhz"), point.get("s11_db")),
-            textcoords="offset points",
-            xytext=(8, 8),
-            fontsize=7,
-            fontproperties=font,
+        marker_rows.append(
+            [
+                point.get("label", ""),
+                _format_mhz(point.get("frequency_mhz")),
+                _format_db(point.get("s11_db")),
+                _format_db(point.get("return_loss_db")),
+                _format_vswr(point.get("vswr")),
+            ]
         )
 
     ax.set_xlabel("Frequency (MHz)", fontproperties=font)
     ax.set_ylabel("S11 (dB)", fontproperties=font)
     ax.grid(True, alpha=0.25)
     ax.legend(prop=font, loc="best")
-    ax_title.text(0.08, 0.1, "图中标记中心谷值、绝对 -3dB 端点和绝对 -10dB 端点；报告首页表格给出端点 S11、回波损耗和 VSWR。", fontsize=9, fontproperties=font, color="#60717a")
+    _draw_report_table(ax_title, marker_rows[:10], [0.07, 0.105, 0.86, 0.22], font, font_size=7.0, header=True)
+    ax_title.text(0.07, 0.355, "曲线标记实际中心谷值、理想频点、绝对 -3dB 端点和绝对 -10dB 端点；详细端点信息见表格。", transform=ax_title.transAxes, fontsize=8.4, fontproperties=font, color="#60717a")
     return fig
 
 
 def _build_na_smith_page(plt, result, logo_path, font):
     fig, ax_title = _new_report_figure(plt, "Smith Chart 标记", logo_path, font)
-    ax = fig.add_axes([0.1, 0.16, 0.55, 0.66])
+    ax = fig.add_axes([0.16, 0.42, 0.68, 0.38])
     smith = result.get("smith")
     if not smith:
         ax.axis("off")
@@ -920,7 +1079,6 @@ def _build_na_smith_page(plt, result, logo_path, font):
             continue
         color = "#b7442e" if marker_type == "center" else "#d9822b"
         ax.scatter(marker.get("real"), marker.get("imag"), s=46, color=color, zorder=5)
-        ax.annotate(marker.get("label", ""), (marker.get("real"), marker.get("imag")), textcoords="offset points", xytext=(8, 6), fontsize=7, fontproperties=font)
         marker_rows.append(
             [
                 marker.get("label", ""),
@@ -937,8 +1095,8 @@ def _build_na_smith_page(plt, result, logo_path, font):
     ax.set_xlabel("Real(Γ)", fontproperties=font)
     ax.set_ylabel("Imag(Γ)", fontproperties=font)
     ax.grid(True, alpha=0.18)
-    _draw_report_table(ax_title, marker_rows, [0.68, 0.25, 0.27, 0.42], font, font_size=7.2, header=True)
-    ax_title.text(0.68, 0.71, "Smith Chart 按需求标记中心频率和绝对 -3dB 左右端点。", fontsize=9, fontproperties=font, color="#60717a")
+    _draw_report_table(ax_title, marker_rows, [0.08, 0.13, 0.84, 0.22], font, font_size=7.2, header=True)
+    ax_title.text(0.08, 0.36, "Smith Chart 按需求标记中心频率和绝对 -3dB 左右端点；标记名称统一放在表格中，避免图内文字重叠。", transform=ax_title.transAxes, fontsize=8.4, fontproperties=font, color="#60717a")
     return fig
 
 
@@ -946,11 +1104,11 @@ def _build_na_valley_pages(plt, result, logo_path, font):
     valleys = result.get("valleys") or []
     if not valleys:
         fig, ax = _new_report_figure(plt, "S11 谷值列表", logo_path, font)
-        ax.text(0.06, 0.72, "暂无谷值数据。", fontsize=11, fontproperties=font)
+        ax.text(0.06, 0.72, "暂无谷值数据。", transform=ax.transAxes, fontsize=11, fontproperties=font)
         return [fig]
 
     pages = []
-    chunk_size = 28
+    chunk_size = 24
     for page_index, start in enumerate(range(0, len(valleys), chunk_size), start=1):
         fig, ax = _new_report_figure(plt, f"S11 谷值列表 第 {page_index} 页", logo_path, font)
         rows = [["#", "频率 MHz", "S11", "RL", "VSWR", "绝对-10dB带宽", "相对+3dB带宽"]]
@@ -968,7 +1126,8 @@ def _build_na_valley_pages(plt, result, logo_path, font):
                     format_hz(rel3.get("width_hz")),
                 ]
             )
-        _draw_report_table(ax, rows, [0.045, 0.12, 0.91, 0.72], font, font_size=7.4, header=True)
+        table_height = min(0.72, max(0.14, 0.036 * len(rows)))
+        _draw_report_table(ax, rows, [0.055, 0.84 - table_height, 0.89, table_height], font, font_size=7.0, header=True)
         pages.append(fig)
     return pages
 
@@ -980,8 +1139,11 @@ def _draw_report_table(ax, rows, bbox, font, font_size=8.0, header=False):
     for (row, _col), cell in table.get_celld().items():
         cell.set_edgecolor("#ccd6d8")
         cell.set_linewidth(0.55)
+        cell.PAD = 0.025
         if font:
             cell.get_text().set_fontproperties(font)
+        cell.get_text().set_wrap(True)
+        cell.get_text().set_va("center")
         if header and row == 0:
             cell.set_facecolor("#1f393f")
             cell.get_text().set_color("#fff7e8")
@@ -1028,6 +1190,13 @@ def _format_mhz(value):
     return f"{float(value):.6f} MHz"
 
 
+def _format_mhz_delta(value):
+    if value is None:
+        return "--"
+    value = float(value)
+    return f"{value:+.3f} MHz"
+
+
 def _format_db(value):
     if value is None:
         return "--"
@@ -1038,3 +1207,40 @@ def _format_vswr(value):
     if value is None:
         return "∞"
     return f"{float(value):.3f}"
+
+
+def _format_percent(value):
+    if value is None:
+        return "--"
+    value = float(value)
+    return f"{value:+.0f}%"
+
+
+def _format_frequency_delta(target_summary):
+    if not target_summary:
+        return "--"
+    error = target_summary.get("frequency_error_mhz")
+    percent = target_summary.get("frequency_error_percent")
+    if error is None or percent is None:
+        return "--"
+    return f"{_format_mhz_delta(error)} ({float(percent):+.2f}%)"
+
+
+def _format_target_comparison_note(target_summary):
+    if not target_summary:
+        return "理想频点：全扫宽或未配置目标频率时不做理想频点对比。"
+    delta = _format_frequency_delta(target_summary)
+    rl_delta = _format_db(target_summary.get("return_loss_delta_db"))
+    status = target_summary.get("status_label") or "--"
+    return f"理想/实际：{status}；频偏 {delta}；RL差 {rl_delta}（正值=实际谷值更深）。"
+
+
+def _format_endpoint_cell(bw, side):
+    return "\n".join(
+        [
+            format_hz(bw.get(f"{side}_hz")),
+            f"S11 {_format_db(bw.get(f'{side}_s11_db'))}",
+            f"RL {_format_db(bw.get(f'{side}_return_loss_db'))}",
+            f"VSWR {_format_vswr(bw.get(f'{side}_vswr'))}",
+        ]
+    )

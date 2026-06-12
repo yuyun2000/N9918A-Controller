@@ -93,9 +93,9 @@ http://127.0.0.1:5000
    - OPEN: `B2C1`，先执行 `CORR:COLL:METH:QCAL:CAL 1`，再执行 `CORR:COLL:INT 1;*OPC?`
    - LOAD: `B1C1`，执行 `CORR:COLL:LOAD 1;*OPC?`
    - SAVE/ANTENNA: 执行 `CORR:COLL:SAVE 0`，再切到 `B2C2`
-4. 测量读取 `CALC:DATA:FDATa?` 得到 S11 dB，读取 `CALC:DATA:SDATA?` 得到复数 Gamma；普通预设显示 S11 曲线、中心谷、回波损耗、驻波比、绝对/相对 3dB/10dB 带宽和 Smith Chart。
+4. 测量读取 `CALC:DATA:FDATa?` 得到 S11 dB，读取 `CALC:DATA:SDATA?` 得到复数 Gamma；普通预设显示 S11 曲线、实际中心谷、理想频点对比、理想频点附近损耗、回波损耗、驻波比、绝对/相对 3dB/10dB 带宽和 Smith Chart。
 5. 带宽有两套口径：绝对阈值 `S11 <= -3dB/-10dB`，相对谷值 `S11 <= valley+3dB/valley+10dB`，端点用线性插值估算。
-6. NA 报告导出为 PDF，包含 M5Stack logo、项目/工程师信息、中心频率、端点 S11、回波损耗、驻波比、S11 曲线、Smith Chart 和谷值列表。
+6. NA 报告导出为 A4 纵向 PDF，包含 M5Stack logo、项目/工程师信息、理想频点与实际中心谷偏移、端点 S11、回波损耗、驻波比、S11 曲线、Smith Chart 和谷值列表。
 
 ## 代码结构
 
