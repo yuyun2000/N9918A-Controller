@@ -101,7 +101,7 @@
           <div class="panel-title">
             <span>01</span>
             <h2>SA 测量流程</h2>
-            <button class="help-button" type="button" aria-label="SA 测量流程说明" data-help="建议先用单次扫描确认频谱和连接，再运行 15 秒快速 EMI 采样；5 分钟采样耗时更长，适合最终确认。测量中可点停止请求中断。">?</button>
+            <button class="help-button" type="button" aria-label="SA 测量流程说明" data-help="建议先用单次扫描确认频谱和连接，再运行 15 秒快速 EMI 采样；每次采样会自动清写 Trace 并等待完整 sweep 后读取。手动清理会清空 Web 数据并把仪器 Trace 置空，便于现场确认。5 分钟采样耗时更长，适合最终确认。测量中可点停止请求中断。">?</button>
           </div>
           <label class="full">
             SA 测试配置
@@ -111,6 +111,7 @@
           <div class="divider"></div>
           <div class="run-buttons">
             <button id="demoBtn">加载演示数据</button>
+            <button id="clearSaBtn">手动清理 Trace</button>
             <button id="singleBtn" class="primary">单次扫描</button>
             <button id="slowBtn">15 秒采样</button>
             <button id="fastBtn">5 分钟采样</button>
@@ -136,13 +137,13 @@
           <div class="panel-title">
             <span>03</span>
             <h2>频谱态势</h2>
-            <button class="help-button" type="button" aria-label="频谱态势说明" data-help="曲线显示当前 SA 测量结果，红/绿虚线分别为 FCC/CE 参考限值。橙色点为峰值，红色点表示超过限值或风险更高。">?</button>
+            <button class="help-button" type="button" aria-label="频谱态势说明" data-help="曲线显示当前 SA 筛查结果，红/绿虚线分别为 FCC/CE 筛查参考限值。正式合规需确认检测器、距离、天线因子、线缆/开关损耗和标准版本。橙色点为峰值，红色点表示超过限值或风险更高。">?</button>
           </div>
           <canvas id="spectrumCanvas" width="1200" height="520"></canvas>
           <div class="legend">
             <span><i class="line measured"></i>测量曲线</span>
-            <span><i class="line fcc"></i>FCC 限值</span>
-            <span><i class="line ce"></i>CE 限值</span>
+            <span><i class="line fcc"></i>FCC 筛查限值</span>
+            <span><i class="line ce"></i>CE 筛查限值</span>
             <span><i class="dot"></i>峰值点</span>
           </div>
         </section>
@@ -151,7 +152,7 @@
           <div class="panel-title">
             <span>04</span>
             <h2>峰值与判定</h2>
-            <button class="help-button" type="button" aria-label="峰值与判定说明" data-help="Margin 为测量值减限值，正数表示超限，接近 0 表示临界。AI 分析会优先关注失败点和临界点。">?</button>
+            <button class="help-button" type="button" aria-label="峰值与判定说明" data-help="Margin 为测量/修正值减筛查限值，正数表示风险或超限，接近 0 表示临界。AI 分析会优先关注失败点和临界点。">?</button>
           </div>
           <div class="table-wrap">
             <table>

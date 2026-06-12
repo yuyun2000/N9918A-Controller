@@ -33,6 +33,7 @@ const elements = {
   switchGrid: $("switchGrid"),
   switchReadout: $("switchReadout"),
   demoBtn: $("demoBtn"),
+  clearSaBtn: $("clearSaBtn"),
   singleBtn: $("singleBtn"),
   slowBtn: $("slowBtn"),
   fastBtn: $("fastBtn"),
@@ -136,7 +137,7 @@ function setModeUi(mode) {
   elements.naWorkspace.classList.toggle("active", mode === "NA");
   elements.modeHint.textContent = mode === "NA"
     ? "NA 模式会调用 FieldFox 网络分析功能；校准会自动执行 OPEN(B2C1) → LOAD(B1C1) → ANTENNA(B2C2) 的 switchbox 顺序。"
-    : "SA 模式保留原有频谱扫描、EMI 采样、AI 分析和 PDF 报告流程。";
+    : "SA 模式使用清写 Trace + 完整 sweep 的筛查流程，保留频谱扫描、EMI 采样、AI 分析和 PDF 报告。";
   if (mode === "SA") {
     renderChart(state.result?.series, state.result?.peaks || []);
   } else {
@@ -185,6 +186,8 @@ function updateStatus(status) {
   elements.slowBtn.disabled = !connected || !status.current_config || measuring || state.mode !== "SA";
   elements.fastBtn.disabled = !connected || !status.current_config || measuring || state.mode !== "SA";
   elements.stopBtn.disabled = !measuring;
+  elements.clearSaBtn.disabled =
+    measuring || state.mode !== "SA" || (!connected && !status.has_single_data && !status.has_emi_data);
   elements.saveBtn.disabled = measuring || (!status.has_single_data && !status.has_emi_data);
   elements.analyzeBtn.disabled = measuring || (!status.has_single_data && !status.has_emi_data);
   elements.pdfBtn.disabled = measuring || !status.has_emi_data;
@@ -828,8 +831,13 @@ async function refreshResult() {
   updateStatus(result.status);
   renderChart(result.series, result.peaks);
   renderPeaks(result.peaks);
+  if (!result.status?.last_report) {
+    elements.downloadSlot.innerHTML = "";
+  }
   if (result.ai_result) {
     elements.aiResult.textContent = result.ai_result;
+  } else {
+    elements.aiResult.textContent = "AI 分析结果会显示在这里。";
   }
   return result;
 }
@@ -903,6 +911,7 @@ function bindEvents() {
     }),
   );
   elements.singleBtn.addEventListener("click", () => runAction("单次扫描", () => post("/api/measure/single")));
+  elements.clearSaBtn.addEventListener("click", () => runAction("手动清理 SA Trace", () => post("/api/sa/clear")));
   elements.slowBtn.addEventListener("click", () => runAction("15 秒 EMI 采样", () => post("/api/measure/timed", { duration_seconds: 15 })));
   elements.fastBtn.addEventListener("click", () => runAction("5 分钟 EMI 采样", () => post("/api/measure/timed", { duration_seconds: 300 })));
   elements.stopBtn.addEventListener("click", () => runAction("停止测量", () => post("/api/measure/stop")));

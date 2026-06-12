@@ -1,16 +1,28 @@
+import json
 import os
 import sys
 import tempfile
 import time
 import types
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from chat import ChatBot, sys_prompt
 import n9918a_backend
-from n9918a_backend import N9918AController
+from n9918a_backend import (
+    N9918AController,
+    collapse_contiguous_indices,
+    dbm_to_dbuv,
+    dbuv_to_dbm,
+    get_emission_limit_info,
+    get_fcc_ce_limits,
+    linear_average_dbuv,
+    post_process_peak_search,
+)
 from n9918a_na_backend import (
     NA_PRESET_CONFIGS,
     N9918ANAController,
@@ -24,16 +36,53 @@ class FakeVisaDevice:
     def __init__(self):
         self.timeout = None
         self.commands = []
+        self.start_freq = 1.0
+        self.stop_freq = 3.0
+        self.n_points = 3
+        self.rbw = 100000.0
+        self.vbw = 100000.0
+        self.amplitude_unit = "DBM"
 
     def write(self, command):
         self.commands.append(("write", command))
+        upper = command.upper()
+        parts = command.split()
+        if upper.startswith(":SENS:FREQ:STAR") and len(parts) >= 2:
+            self.start_freq = float(parts[-1])
+        elif upper.startswith(":SENS:FREQ:STOP") and len(parts) >= 2:
+            self.stop_freq = float(parts[-1])
+        elif upper.startswith(":SENS:SWE:POIN") and len(parts) >= 2:
+            self.n_points = int(float(parts[-1]))
+        elif upper.startswith(":SENS:BAND:RES ") and len(parts) >= 2:
+            self.rbw = float(parts[-1])
+        elif upper.startswith(":SENS:BAND:VID ") and len(parts) >= 2:
+            self.vbw = float(parts[-1])
+        elif upper.startswith(":SENS:AMPL:UNIT") and len(parts) >= 2:
+            self.amplitude_unit = parts[-1].upper()
 
     def query(self, command):
         self.commands.append(("query", command))
         if command == "*IDN?":
             return "Fake,N9918A,0,1"
+        if command == "SYST:ERR?":
+            return '+0,"No error"'
+        if "FREQ:STAR?" in command:
+            return str(self.start_freq)
+        if "FREQ:STOP?" in command:
+            return str(self.stop_freq)
+        if "SWE:POIN?" in command:
+            return str(self.n_points)
         if "SWE:TIME?" in command:
             return "0.01"
+        if "BAND:RES?" in command:
+            return str(self.rbw)
+        if "BAND:VID?" in command:
+            return str(self.vbw)
+        if "TRAC1:XVAL?" in command:
+            if self.n_points <= 1:
+                return str(self.start_freq)
+            step = (self.stop_freq - self.start_freq) / (self.n_points - 1)
+            return ",".join(str(self.start_freq + i * step) for i in range(self.n_points))
         if "FDATa?" in command:
             return "-1,-8,-20,-8,-1"
         if "SDATA?" in command:
@@ -106,6 +155,7 @@ class WebAppSmokeTest(unittest.TestCase):
             self.assertIn("中心与带宽端点详情".encode("utf-8"), page.data)
             self.assertIn("理想频点附近损耗".encode("utf-8"), page.data)
             self.assertIn("Smith Chart 与阻抗".encode("utf-8"), page.data)
+            self.assertIn("手动清理 Trace".encode("utf-8"), page.data)
         finally:
             page.close()
 
@@ -131,6 +181,11 @@ class WebAppSmokeTest(unittest.TestCase):
     def test_launch_scripts_point_to_web_by_default(self):
         run_bat = (ROOT / "run.bat").read_text(encoding="utf-8")
         self.assertIn("web_app.py", run_bat)
+        self.assertIn("N9918A_WEB_URL=http://127.0.0.1:5000", run_bat)
+        web_app_py = (ROOT / "web_app.py").read_text(encoding="utf-8")
+        self.assertIn("webbrowser.open", web_app_py)
+        gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("ai_config.local.json", gitignore)
 
     def test_diagnostics_api(self):
         diagnostics = self.client.get("/api/diagnostics").get_json()
@@ -155,6 +210,7 @@ class WebAppSmokeTest(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertTrue(result["data"]["series"])
         self.assertFalse(result["data"]["status"]["has_emi_data"])
+        self.assertEqual(result["data"]["detector_mode"], "PEAK")
 
         timed = self.client.post("/api/measure/timed", json={"duration_seconds": 15}).get_json()
         self.assertTrue(timed["ok"], timed)
@@ -164,6 +220,16 @@ class WebAppSmokeTest(unittest.TestCase):
         self.assertTrue(result["data"]["status"]["has_emi_data"])
         self.assertTrue(result["data"]["measurement_summary"]["demo"])
         self.assertIn("QUASI_PEAK", result["data"]["modes"])
+        self.assertEqual(result["data"]["detector_mode"], "QUASI_PEAK")
+
+        cleared = self.client.post("/api/sa/clear").get_json()
+        self.assertTrue(cleared["ok"], cleared)
+        result = self.client.get("/api/result").get_json()
+        self.assertTrue(result["ok"], result)
+        self.assertFalse(result["data"]["series"])
+        self.assertFalse(result["data"]["peaks"])
+        self.assertFalse(result["data"]["status"]["has_single_data"])
+        self.assertFalse(result["data"]["status"]["has_emi_data"])
 
     def test_demo_save_data(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -334,9 +400,73 @@ class BackendRegressionTest(unittest.TestCase):
         commands = [command for _kind, command in FakeResourceManager.last_device.commands]
         self.assertIn("*IDN?", commands)
         self.assertIn("INST:SEL 'SA';*OPC?", commands)
+        self.assertIn("INIT:CONT OFF", commands)
+        self.assertIn(":SENS:AMPL:UNIT DBUV", commands)
+        self.assertIn(":TRAC1:TYPE CLRW", commands)
         self.assertIn(":INIT:IMM;*OPC?", commands)
-        self.assertIn(":TRAC:DATA?", commands)
+        self.assertIn(":TRAC1:DATA?", commands)
         self.assertFalse(any("[WARN]" in command for command in commands))
+
+    def test_sa_config_applies_screening_trace_setup(self):
+        previous_pyvisa = n9918a_backend.pyvisa
+        n9918a_backend.pyvisa = FakePyVisa
+        try:
+            controller = N9918AController(ip_address="192.0.2.1")
+            self.assertTrue(controller.connect())
+            self.assertTrue(controller.configure_settings("EMC_30MHz_1GHz"))
+        finally:
+            n9918a_backend.pyvisa = previous_pyvisa
+
+        commands = [command for _kind, command in FakeResourceManager.last_device.commands]
+        self.assertIn(":SENS:AMPL:UNIT DBUV", commands)
+        self.assertIn(":SENS:BAND:RES:AUTO OFF", commands)
+        self.assertIn(":SENS:BAND:VID:AUTO OFF", commands)
+        self.assertIn(":SENS:DET POS", commands)
+        self.assertIn(":TRAC1:TYPE CLRW", commands)
+        self.assertIn("SYST:ERR?", commands)
+
+    def test_sa_manual_clear_blanks_fieldfox_trace(self):
+        previous_pyvisa = n9918a_backend.pyvisa
+        n9918a_backend.pyvisa = FakePyVisa
+        try:
+            controller = N9918AController(ip_address="192.0.2.1")
+            self.assertTrue(controller.connect())
+            self.assertTrue(controller.clear_sa_display_state())
+        finally:
+            n9918a_backend.pyvisa = previous_pyvisa
+
+        commands = [command for _kind, command in FakeResourceManager.last_device.commands]
+        self.assertIn("*CLS", commands)
+        self.assertIn("INST:SEL 'SA';*OPC?", commands)
+        self.assertIn("INIT:CONT OFF", commands)
+        self.assertIn(":SENS:AMPL:UNIT DBUV", commands)
+        self.assertIn(":TRAC1:TYPE CLRW", commands)
+        self.assertIn(":TRAC1:TYPE BLAN", commands)
+        self.assertIn("SYST:ERR?", commands)
+
+    def test_sa_screening_math_and_limit_grouping(self):
+        self.assertAlmostEqual(dbm_to_dbuv(-107), -0.0103, places=3)
+        self.assertAlmostEqual(dbuv_to_dbm(dbm_to_dbuv(-25)), -25.0, places=6)
+        self.assertAlmostEqual(linear_average_dbuv([0, 20]), 14.807, places=3)
+
+        info = get_emission_limit_info(100e6)
+        self.assertEqual(info["unit"], "dBuV/m")
+        self.assertEqual(info["measurement_type"], "radiated_3m_screening")
+        self.assertAlmostEqual(info["fcc_limit"], 43.5)
+        above_peak = get_emission_limit_info(1.5e9, detector_type="PEAK")
+        self.assertEqual(above_peak["fcc_detector"], "PEAK")
+        self.assertAlmostEqual(above_peak["fcc_limit"], 74.0)
+        fcc_peak, ce_peak = get_fcc_ce_limits(1.5e9, detector_type="PEAK")
+        self.assertEqual((fcc_peak, ce_peak), (74.0, 70.0))
+
+        grouped = collapse_contiguous_indices([1, 2, 3, 7, 8], [0, 2, 5, 3, 0, 0, 0, 9, 4])
+        self.assertEqual(grouped, [2, 7])
+
+        frequencies = [30e6, 31e6, 32e6, 100e6, 101e6, 500e6]
+        amplitudes = [10, 45, 43, 50, 49, 10]
+        peaks = post_process_peak_search(frequencies, amplitudes, peak_distance=1, min_prominence=0.1)
+        exceeded = [peak for peak in peaks if peak["exceed_fcc"] or peak["exceed_ce"]]
+        self.assertEqual([round(peak["frequency_mhz"]) for peak in exceeded], [31, 100])
 
     def test_na_calibration_switch_and_scpi_sequence(self):
         device = FakeVisaDevice()
@@ -356,6 +486,65 @@ class BackendRegressionTest(unittest.TestCase):
         self.assertIn("CORR:COLL:METH:QCAL:CAL 1", commands)
         self.assertLess(commands.index("CORR:COLL:INT 1;*OPC?"), commands.index("CORR:COLL:LOAD 1;*OPC?"))
         self.assertIn("CORR:COLL:SAVE 0", commands)
+
+
+class AIClientRegressionTest(unittest.TestCase):
+    def test_ai_prompt_keeps_utf8_chinese(self):
+        self.assertIn("SA 筛查结果分析助手", sys_prompt)
+        self.assertIn("整改建议", sys_prompt)
+        self.assertGreater(sum(1 for char in sys_prompt if "\u4e00" <= char <= "\u9fff"), 100)
+        self.assertEqual(sys_prompt.count("?"), 0)
+
+    def test_ai_client_uses_responses_api_payload(self):
+        captured = {}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"output":[{"content":[{"type":"output_text","text":"analysis ok"}]}]}'
+
+        def fake_urlopen(request, timeout=None):
+            captured["url"] = request.full_url
+            captured["headers"] = dict(request.header_items())
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            captured["timeout"] = timeout
+            return FakeResponse()
+
+        bot = ChatBot(
+            api_key="test-key",
+            base_url="http://192.0.2.10:3000/",
+            model="gpt-5.5",
+            system_message="system prompt",
+            reasoning_effort="xhigh",
+            max_output_tokens=123,
+        )
+        with patch("urllib.request.urlopen", fake_urlopen):
+            response = bot.chat_no_stream("analyze this")
+
+        self.assertEqual(response.output_text, "analysis ok")
+        self.assertEqual(captured["url"], "http://192.0.2.10:3000/v1/responses")
+        self.assertEqual(captured["body"]["model"], "gpt-5.5")
+        self.assertEqual(captured["body"]["instructions"], "system prompt")
+        self.assertEqual(captured["body"]["input"], "analyze this")
+        self.assertEqual(captured["body"]["reasoning"], {"effort": "xhigh"})
+        self.assertEqual(captured["body"]["max_output_tokens"], 123)
+        self.assertFalse(captured["body"]["store"])
+        self.assertNotIn("messages", captured["body"])
+        self.assertNotIn("chat/completions", captured["url"])
+
+    def test_ai_output_text_extraction_supports_proxy_shapes(self):
+        self.assertEqual(ChatBot.extract_output_text({"output_text": "direct"}), "direct")
+        self.assertEqual(
+            ChatBot.extract_output_text(
+                {"choices": [{"message": {"content": "chat-like compatibility"}}]}
+            ),
+            "chat-like compatibility",
+        )
 
 
 class NAAlgorithmTest(unittest.TestCase):

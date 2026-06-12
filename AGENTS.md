@@ -23,7 +23,7 @@
 - `n9918a_backend.py`: SA/EMC 后端控制逻辑，使用 PyVISA/SCPI 配置仪器、采样、峰值搜索和数据保存。
 - `n9918a_na_backend.py`: NA/S11 后端控制逻辑，使用 PyVISA/SCPI 配置 NA、执行 QuickCal、读取 `FDATa?`/`SDATA?`、计算谷值/带宽/Smith 数据。
 - `Switch.py`: Mini-Circuits 切换器封装，通过 `pythonnet` 加载 `mcl_RF_Switch_Controller64.dll`。
-- `chat.py`: AI 分析封装，使用 Volcengine Ark/OpenAI 兼容接口；密钥应来自环境变量。
+- `chat.py`: AI 分析封装，使用 OpenAI-compatible Responses API；密钥优先来自本地忽略文件或环境变量，不要写入可提交源码。
 - `utils/create_pdf.py`: ReportLab PDF 报告生成，依赖仓库字体或 Windows 中文字体。
 - `doc/`: N9918A/FieldFox 官方说明资料，涉及 SCPI、规格或规则时优先对照这里。
 - `run.bat`: 激活 `visa` conda 环境并启动 Web 控制台。
@@ -42,8 +42,8 @@
 - 运行环境以 Windows 为主；README 推荐 Python 3.8，Mini-Circuits DLL/`pythonnet` 也要注意 64-bit Python 兼容性。
 - 不要删除或替换 `mcl_RF_Switch_Controller64.dll`、`assets/m5logo2022.png`、`utils/` 字体文件和 `doc/` 官方 PDF，除非用户明确要求并说明替代方案。
 - 现有文件包含中文内容；写入中文文件必须使用 UTF-8，避免 PowerShell 默认编码导致乱码。
-- 不要把 API key、token、Wi-Fi 密码、客户测试数据或私有日志写入代码、README、截图、报告或回答中。
-- AI 分析密钥使用环境变量：优先 `ARK_API_KEY`，也可用 `VOLCENGINE_API_KEY` 或 `OPENAI_API_KEY`；模型和地址可用 `ARK_MODEL`、`ARK_BASE_URL` 覆盖。
+- 不要把 API key、token、Wi-Fi 密码、客户测试数据或私有日志写入可提交代码、README、截图、报告或回答中；本地密钥只能放在 `.gitignore` 覆盖的文件，例如 `ai_config.local.json`。
+- AI 分析密钥优先读取仓库根目录 `ai_config.local.json`，也可用 `N9918A_AI_API_KEY`、`OPENAI_API_KEY`、`ARK_API_KEY` 或 `VOLCENGINE_API_KEY`；默认模型/地址/思考强度为 `gpt-5.5`、`http://192.168.20.38:3000/`、`xhigh`，可用 `N9918A_AI_MODEL`、`N9918A_AI_BASE_URL`、`N9918A_AI_REASONING_EFFORT` 或本地配置文件覆盖；调用路径必须使用 Responses API，不要回退到 Chat Completions。
 - 生成的测试图、PDF、日志、缓存文件一般视为运行产物；除非任务要求，不要扩大提交范围到新的产物文件。
 - 未在 Web 控制台、服务层或文档中引用的历史测试脚本、截图和临时入口默认视为可清理对象；清理前用 `rg` 确认没有引用。
 - 仪器默认 IP、VISA resource 字符串、SCPI 模式切换和频段参数属于硬件行为配置，修改时要说明兼容影响。

@@ -5,6 +5,7 @@ __pycache__/
 # Local environment and credentials
 .env
 .env.*
+ai_config.local.json
 
 # Runtime outputs
 log.txt

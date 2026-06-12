@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 from n9918a_backend import (
     N9918AController,
     get_fcc_ce_limits,
+    linear_average_dbuv,
     post_process_peak_search,
     save_emi_measurement_data,
     save_peak_analysis,
@@ -64,6 +65,7 @@ class SATestService:
         self.current_frequencies = None
         self.current_amplitudes = None
         self.current_peaks = None
+        self.current_detector_mode = "QUASI_PEAK"
         self.emi_results = {}
         self.last_ai_result = ""
         self.last_report_path = None
@@ -192,6 +194,7 @@ class SATestService:
         self.current_frequencies = None
         self.current_amplitudes = None
         self.current_peaks = None
+        self.current_detector_mode = "QUASI_PEAK"
         self.emi_results = {}
         self.last_ai_result = ""
 
@@ -320,6 +323,41 @@ class SATestService:
         result["warnings"] = warnings
         return result
 
+    def clear_sa_state(self):
+        with self.lock:
+            if self.measurement_in_progress:
+                raise ServiceError("测量或校准进行中，不能清理 SA 状态。")
+            self.progress_message = "正在清理 SA Trace..."
+            self.last_error = None
+
+        if self.demo_mode:
+            with self.lock:
+                self._clear_sa_results_locked()
+                self.last_report_path = None
+                self.progress_message = "演示 SA 状态已清理"
+            return self.status()
+
+        if not self.controller.connected:
+            with self.lock:
+                self.progress_message = "SA 清理失败"
+                self.last_error = "请先连接 N9918A"
+            raise ServiceError("请先连接 N9918A，再清理 SA Trace。")
+
+        if self.current_mode != "SA":
+            self.switch_mode("SA")
+
+        if not self.controller.clear_sa_display_state(blank_trace=True):
+            with self.lock:
+                self.progress_message = "SA 清理失败"
+                self.last_error = "仪器返回错误或不支持 Trace 清理命令"
+            raise ServiceError("SA Trace 清理失败，请检查仪器模式、SCPI 错误队列和连接状态。")
+
+        with self.lock:
+            self._clear_sa_results_locked()
+            self.last_report_path = None
+            self.progress_message = "SA Trace 已清理，仪器图表已清空"
+        return self.status()
+
     def _apply_preset_fields(self, preset_key):
         config = self.controller.get_preset_configs().get(preset_key)
         if not config:
@@ -400,12 +438,13 @@ class SATestService:
 
         results = self._generate_demo_results(duration_seconds)
         frequencies, amplitudes = results["QUASI_PEAK"]
-        peaks = post_process_peak_search(frequencies, amplitudes)
+        peaks = post_process_peak_search(frequencies, amplitudes, detector_type="QUASI_PEAK")
         with self.lock:
             self.emi_results = results
             self.current_frequencies = frequencies
             self.current_amplitudes = amplitudes
             self.current_peaks = peaks
+            self.current_detector_mode = "QUASI_PEAK"
             self.last_ai_result = (
                 "Demo AI 分析：175 MHz 与 275 MHz 附近出现高风险峰值，"
                 "疑似 25 MHz 基准时钟谐波或线缆耦合路径引入。请在真实硬件上复测后再用于整改决策。"
@@ -417,11 +456,12 @@ class SATestService:
             try:
                 results = self._generate_demo_results(1)
                 frequencies, amplitudes = results["PEAK"]
-                peaks = post_process_peak_search(frequencies, amplitudes)
+                peaks = post_process_peak_search(frequencies, amplitudes, detector_type="PEAK")
                 with self.lock:
                     self.current_frequencies = frequencies
                     self.current_amplitudes = amplitudes
                     self.current_peaks = peaks
+                    self.current_detector_mode = "PEAK"
                     self.emi_results = {}
                     self.last_ai_result = ""
                     self.progress_message = "演示单次扫描完成"
@@ -435,11 +475,12 @@ class SATestService:
             frequencies, amplitudes = self.controller.read_trace_data()
             if not frequencies or not amplitudes:
                 raise ServiceError("单次测量未返回有效数据。")
-            peaks = post_process_peak_search(frequencies, amplitudes)
+            peaks = post_process_peak_search(frequencies, amplitudes, detector_type="PEAK")
             with self.lock:
                 self.current_frequencies = frequencies
                 self.current_amplitudes = amplitudes
                 self.current_peaks = peaks
+                self.current_detector_mode = "PEAK"
                 self.emi_results = {}
                 self.last_ai_result = ""
                 self.progress_message = "单次扫描完成"
@@ -458,12 +499,13 @@ class SATestService:
                 time.sleep(0.4)
                 results = self._generate_demo_results(duration_seconds)
                 frequencies, amplitudes = results["QUASI_PEAK"]
-                peaks = post_process_peak_search(frequencies, amplitudes)
+                peaks = post_process_peak_search(frequencies, amplitudes, detector_type="QUASI_PEAK")
                 with self.lock:
                     self.emi_results = results
                     self.current_frequencies = frequencies
                     self.current_amplitudes = amplitudes
                     self.current_peaks = peaks
+                    self.current_detector_mode = "QUASI_PEAK"
                     self.last_ai_result = ""
                     self.progress_message = f"演示 EMI {duration_seconds} 秒采样完成"
             finally:
@@ -482,12 +524,13 @@ class SATestService:
 
             display_mode = "QUASI_PEAK" if "QUASI_PEAK" in results else "PEAK"
             frequencies, amplitudes = results[display_mode]
-            peaks = post_process_peak_search(frequencies, amplitudes)
+            peaks = post_process_peak_search(frequencies, amplitudes, detector_type=display_mode)
             with self.lock:
                 self.emi_results = results
                 self.current_frequencies = frequencies
                 self.current_amplitudes = amplitudes
                 self.current_peaks = peaks
+                self.current_detector_mode = display_mode
                 self.last_ai_result = ""
                 self.progress_message = f"EMI {duration_seconds} 秒采样完成"
         except Exception as exc:
@@ -536,7 +579,7 @@ class SATestService:
 
         peak = [max(sample["amplitudes"][i] for sample in samples) for i in range(n_points)]
         average = [
-            sum(sample["amplitudes"][i] for sample in samples) / len(samples)
+            linear_average_dbuv([sample["amplitudes"][i] for sample in samples])
             for i in range(n_points)
         ]
         quasi_peak = [max(avg * 0.74 + pk * 0.26, avg + 1.5) for avg, pk in zip(average, peak)]
@@ -555,6 +598,10 @@ class SATestService:
                 "rbw": self.controller.rbw,
                 "start_time": samples[0]["timestamp"],
                 "end_time": samples[-1]["timestamp"],
+                "amplitude_unit": "DBUV",
+                "corrections": self.controller.sa_corrections.copy(),
+                "correction_total_db": self.controller.correction_total_db(),
+                "screening_mode": True,
             },
             "measurement_summary": {
                 "total_duration": duration_seconds,
@@ -564,6 +611,14 @@ class SATestService:
                 "modes_computed": ["PEAK", "QUASI_PEAK", "AVERAGE"],
                 "measurement_time": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "demo": True,
+                "screening_mode": True,
+                "quasi_peak_estimated": True,
+                "limit_note": "演示数据仅用于 UI/流程检查，不代表真实合规结果。",
+            },
+            "detector_notes": {
+                "PEAK": "演示数据峰值。",
+                "AVERAGE": "电压域筛查平均。",
+                "QUASI_PEAK": "演示用准峰值近似。",
             },
         }
 
@@ -880,6 +935,7 @@ class SATestService:
                 "peak_table": self.format_peak_table(),
                 "measurement_summary": self.emi_results.get("measurement_summary", {}),
                 "sampling_info": self.emi_results.get("sampling_info", {}),
+                "detector_mode": self.current_detector_mode,
                 "ai_result": self.last_ai_result,
             }
 
@@ -909,6 +965,7 @@ class SATestService:
             return "暂无峰值数据。"
 
         lines = [
+            "注：当前 SA 结果为筛查口径；Margin 为测量/修正值减参考限值，正式合规需确认天线因子、线缆/开关损耗、距离和检测器。",
             "No   频率 [MHz]   幅度 [dBμV]   FCC限值 [dBμV]   FCC裕量 [dB]    CE限值 [dBμV]    CE裕量 [dB]     状态",
             "-" * 128,
         ]
@@ -939,8 +996,12 @@ class SATestService:
             duration = self.emi_results["measurement_summary"].get("actual_measurement_time", 0)
 
         return (
-            f"频段:{start_freq/1e6:.3f}MHz-{stop_freq/1e6:.3f}MHz 测量时长：{duration}s 测量数据：\n"
-            "QUASI_PEAK Mode Results:\n"
+            f"测试模式: SA 筛查模式（非正式合规判定）\n"
+            f"频段: {start_freq/1e6:.3f} MHz - {stop_freq/1e6:.3f} MHz\n"
+            f"测量时长: {duration}s\n"
+            "口径: Margin = 测量/修正值 - 参考限值；正数为超限风险，接近 0 为临界风险。\n"
+            "测量数据:\n"
+            "SA Screening Estimated QUASI_PEAK Results:\n"
             f"{'=' * 100}\n"
             f"{self.format_peak_table()}\n"
         )
@@ -951,8 +1012,10 @@ class SATestService:
 
         bot = ChatBot(system_message=sys_prompt)
         response = bot.chat_no_stream(input_text)
-        msg_obj = response.choices[0].message
-        result = msg_obj.content if hasattr(msg_obj, "content") else msg_obj.get("content", "")
+        result = getattr(response, "output_text", "")
+        if not result:
+            msg_obj = response.choices[0].message
+            result = msg_obj.content if hasattr(msg_obj, "content") else msg_obj.get("content", "")
         with self.lock:
             self.last_ai_result = result
         return result
@@ -1048,12 +1111,13 @@ class SATestService:
 
         fcc_limits = []
         ce_limits = []
+        detector_mode = getattr(self, "current_detector_mode", "QUASI_PEAK")
         for freq in frequencies:
-            fcc_limit, ce_limit = get_fcc_ce_limits(freq)
+            fcc_limit, ce_limit = get_fcc_ce_limits(freq, detector_type=detector_mode)
             fcc_limits.append(fcc_limit)
             ce_limits.append(ce_limit)
-        ax.semilogx(freq_mhz, fcc_limits, color="#d95032", linewidth=1, linestyle="--", label="FCC Class B")
-        ax.semilogx(freq_mhz, ce_limits, color="#287a3e", linewidth=1, linestyle="--", label="CE Class B")
+        ax.semilogx(freq_mhz, fcc_limits, color="#d95032", linewidth=1, linestyle="--", label="FCC 筛查限值")
+        ax.semilogx(freq_mhz, ce_limits, color="#287a3e", linewidth=1, linestyle="--", label="CE 筛查限值")
 
         for peak in peaks[:15]:
             color = "#d95032" if peak["exceed_fcc"] or peak["exceed_ce"] else "#222222"

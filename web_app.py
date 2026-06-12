@@ -1,5 +1,8 @@
 import importlib.util
+import json
 import os
+import threading
+import webbrowser
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_file, send_from_directory
@@ -8,6 +11,7 @@ from sa_test_service import SATestService, ServiceError, SWITCH_IMPORT_ERROR
 
 ROOT = Path(__file__).resolve().parent
 WEB_ROOT = ROOT / "web_frontend"
+AI_LOCAL_CONFIG = ROOT / "ai_config.local.json"
 
 app = Flask(__name__, static_folder=str(WEB_ROOT), static_url_path="")
 service = SATestService()
@@ -33,7 +37,6 @@ def build_diagnostics():
         ("PyVISA", "pyvisa"),
         ("SciPy", "scipy"),
         ("ReportLab", "reportlab"),
-        ("Volcengine Ark SDK", "volcenginesdkarkruntime"),
         ("pythonnet clr", "clr"),
     ]
     packages = [
@@ -68,22 +71,34 @@ def build_diagnostics():
         }
     )
 
-    ai_keys = ["ARK_API_KEY", "VOLCENGINE_API_KEY", "OPENAI_API_KEY"]
+    ai_keys = ["N9918A_AI_API_KEY", "OPENAI_API_KEY", "ARK_API_KEY", "VOLCENGINE_API_KEY"]
+    has_ai_local_key = False
+    if AI_LOCAL_CONFIG.exists():
+        try:
+            has_ai_local_key = bool(json.loads(AI_LOCAL_CONFIG.read_text(encoding="utf-8-sig")).get("api_key"))
+        except Exception:
+            has_ai_local_key = False
+    has_ai_key = has_ai_local_key or any(os.getenv(key) for key in ai_keys)
     environment = [
         {
             "name": "AI API 密钥",
-            "ok": any(os.getenv(key) for key in ai_keys),
-            "detail": "已通过环境变量配置" if any(os.getenv(key) for key in ai_keys) else "未配置",
+            "ok": has_ai_key,
+            "detail": "已通过本地配置文件配置" if has_ai_local_key else ("已通过环境变量配置" if has_ai_key else "未配置 ai_config.local.json 或 N9918A_AI_API_KEY/OPENAI_API_KEY"),
         },
         {
-            "name": "ARK_BASE_URL",
+            "name": "N9918A_AI_BASE_URL",
             "ok": True,
-            "detail": "已配置" if os.getenv("ARK_BASE_URL") else "使用默认值",
+            "detail": "已配置" if os.getenv("N9918A_AI_BASE_URL") or os.getenv("OPENAI_BASE_URL") else "默认 http://192.168.20.38:3000/",
         },
         {
-            "name": "ARK_MODEL",
+            "name": "N9918A_AI_MODEL",
             "ok": True,
-            "detail": "已配置" if os.getenv("ARK_MODEL") else "使用默认值",
+            "detail": "已配置" if os.getenv("N9918A_AI_MODEL") or os.getenv("OPENAI_MODEL") else "默认 gpt-5.5",
+        },
+        {
+            "name": "N9918A_AI_REASONING_EFFORT",
+            "ok": True,
+            "detail": "已配置" if os.getenv("N9918A_AI_REASONING_EFFORT") or os.getenv("OPENAI_REASONING_EFFORT") else "默认 xhigh",
         },
     ]
 
@@ -228,6 +243,11 @@ def api_configure():
     return ok(service.configure(data.get("preset_key", "")))
 
 
+@app.post("/api/sa/clear")
+def api_sa_clear():
+    return ok(service.clear_sa_state())
+
+
 @app.post("/api/switch/connect")
 def api_switch_connect():
     return ok(service.connect_switch())
@@ -296,8 +316,21 @@ def api_report_download(filename):
     return send_file(report_path, as_attachment=True)
 
 
+def _auto_open_browser(url):
+    if os.getenv("N9918A_AUTO_OPEN_BROWSER", "1").lower() in {"0", "false", "no"}:
+        return
+    timer = threading.Timer(1.0, lambda: webbrowser.open(url))
+    timer.daemon = True
+    timer.start()
+
+
 def main():
-    app.run(host="127.0.0.1", port=5000, threaded=True)
+    host = os.getenv("N9918A_WEB_HOST", "127.0.0.1")
+    port = int(os.getenv("N9918A_WEB_PORT", "5000"))
+    url = os.getenv("N9918A_WEB_URL", f"http://{host}:{port}")
+    print(f"N9918A Web Control Deck: {url}")
+    _auto_open_browser(url)
+    app.run(host=host, port=port, threaded=True)
 
 
 if __name__ == "__main__":

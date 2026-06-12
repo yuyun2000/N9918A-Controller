@@ -16,6 +16,7 @@ import numpy as np
 import time
 import csv
 import os
+import math
 from datetime import datetime
 try:
     from scipy import signal
@@ -32,6 +33,170 @@ else:  # Windows/Linux
     plt.rcParams['font.sans-serif'] = ['SimHei', 'Arial Unicode MS', 'DejaVu Sans']
 
 plt.rcParams['axes.unicode_minus'] = False
+
+
+DEFAULT_SA_CORRECTIONS = {
+    "cable_loss_db": 0.0,
+    "antenna_factor_db": 0.0,
+    "switch_loss_db": 0.0,
+    "external_preamp_gain_db": 0.0,
+}
+
+SCREENING_LIMIT_NOTE = (
+    "Screening reference only. Formal EMC judgment must confirm detector, "
+    "distance, antenna/cable/switch corrections, site setup, and standard version."
+)
+
+
+def dbm_to_dbuv(dbm_value, impedance_ohm=50.0):
+    """Convert dBm to dB microvolts for a resistive system."""
+    return float(dbm_value) + 90.0 + 10.0 * math.log10(float(impedance_ohm))
+
+
+def dbuv_to_dbm(dbuv_value, impedance_ohm=50.0):
+    """Convert dB microvolts to dBm for a resistive system."""
+    return float(dbuv_value) - 90.0 - 10.0 * math.log10(float(impedance_ohm))
+
+
+def dbuv_to_microvolts(dbuv_value):
+    return 10 ** (float(dbuv_value) / 20.0)
+
+
+def microvolts_to_dbuv(microvolts):
+    return 20.0 * math.log10(max(float(microvolts), 1e-12))
+
+
+def linear_average_dbuv(values):
+    """Average dBuV samples in voltage domain, not directly in dB domain."""
+    if not values:
+        return 0.0
+    linear_values = [dbuv_to_microvolts(value) for value in values]
+    return microvolts_to_dbuv(sum(linear_values) / len(linear_values))
+
+
+def _log_interpolate_limit(freq_mhz, start_mhz, stop_mhz, start_limit, stop_limit):
+    if freq_mhz <= start_mhz:
+        return float(start_limit)
+    if freq_mhz >= stop_mhz:
+        return float(stop_limit)
+    ratio = (math.log10(freq_mhz) - math.log10(start_mhz)) / (
+        math.log10(stop_mhz) - math.log10(start_mhz)
+    )
+    return float(start_limit) + ratio * (float(stop_limit) - float(start_limit))
+
+
+def _select_detector_limit(detector_type, quasi_peak, average=None, peak=None):
+    detector = (detector_type or "QUASI_PEAK").upper()
+    if detector in {"AVERAGE", "AVG", "EAV"} and average is not None:
+        return float(average), "AVERAGE"
+    if detector in {"PEAK", "PK", "POSITIVE"} and peak is not None:
+        return float(peak), "PEAK"
+    return float(quasi_peak), "QUASI_PEAK"
+
+
+def get_emission_limit_info(freq_hz, detector_type="QUASI_PEAK"):
+    """
+    Return screening FCC/CE limit metadata for the current frequency.
+
+    The returned limits are intentionally labelled as screening references:
+    conducted ranges are in dBuV at the receiver input, while radiated ranges
+    are in dBuV/m and require the correction chain to include antenna factor.
+    """
+    freq_mhz = float(freq_hz) / 1e6
+    detector = (detector_type or "QUASI_PEAK").upper()
+
+    if 0.150 <= freq_mhz < 30.0:
+        if freq_mhz < 0.500:
+            fcc_qp = _log_interpolate_limit(freq_mhz, 0.150, 0.500, 66.0, 56.0)
+            fcc_avg = _log_interpolate_limit(freq_mhz, 0.150, 0.500, 56.0, 46.0)
+        elif freq_mhz < 5.0:
+            fcc_qp, fcc_avg = 56.0, 46.0
+        else:
+            fcc_qp, fcc_avg = 60.0, 50.0
+        ce_qp, ce_avg = fcc_qp, fcc_avg
+        fcc_limit, fcc_detector = _select_detector_limit(detector, fcc_qp, average=fcc_avg)
+        ce_limit, ce_detector = _select_detector_limit(detector, ce_qp, average=ce_avg)
+        return {
+            "fcc_limit": fcc_limit,
+            "ce_limit": ce_limit,
+            "fcc_detector": fcc_detector,
+            "ce_detector": ce_detector,
+            "unit": "dBuV",
+            "measurement_type": "conducted_mains_screening",
+            "distance_m": None,
+            "fcc_source": "FCC Part 15 Class B conducted mains screening",
+            "ce_source": "EN 55032/CISPR 32 Class B conducted mains screening",
+            "note": SCREENING_LIMIT_NOTE,
+        }
+
+    if 30.0 <= freq_mhz < 1000.0:
+        if freq_mhz < 88.0:
+            fcc_limit = 40.0
+        elif freq_mhz < 216.0:
+            fcc_limit = 43.5
+        elif freq_mhz < 960.0:
+            fcc_limit = 46.0
+        else:
+            fcc_limit = 54.0
+        ce_limit = 40.0 if freq_mhz < 230.0 else 47.0
+        return {
+            "fcc_limit": fcc_limit,
+            "ce_limit": ce_limit,
+            "fcc_detector": "QUASI_PEAK",
+            "ce_detector": "QUASI_PEAK",
+            "unit": "dBuV/m",
+            "measurement_type": "radiated_3m_screening",
+            "distance_m": 3.0,
+            "fcc_source": "FCC Part 15 Class B radiated 3m screening",
+            "ce_source": "EN 55032/CISPR 32 Class B radiated 3m screening",
+            "note": SCREENING_LIMIT_NOTE,
+        }
+
+    if 1000.0 <= freq_mhz <= 18000.0:
+        fcc_limit, fcc_detector = _select_detector_limit(detector, 54.0, average=54.0, peak=74.0)
+        ce_limit, ce_detector = _select_detector_limit(detector, 50.0, average=50.0, peak=70.0)
+        return {
+            "fcc_limit": fcc_limit,
+            "ce_limit": ce_limit,
+            "fcc_detector": fcc_detector,
+            "ce_detector": ce_detector,
+            "unit": "dBuV/m",
+            "measurement_type": "radiated_3m_screening_above_1ghz",
+            "distance_m": 3.0,
+            "fcc_source": "FCC Part 15 Class B radiated above 1GHz screening",
+            "ce_source": "EN 55032/CISPR 32 Class B radiated above 1GHz screening",
+            "note": SCREENING_LIMIT_NOTE,
+        }
+
+    return {
+        "fcc_limit": 120.0,
+        "ce_limit": 120.0,
+        "fcc_detector": detector,
+        "ce_detector": detector,
+        "unit": "dBuV",
+        "measurement_type": "out_of_screening_scope",
+        "distance_m": None,
+        "fcc_source": "out of configured screening range",
+        "ce_source": "out of configured screening range",
+        "note": SCREENING_LIMIT_NOTE,
+    }
+
+
+def collapse_contiguous_indices(indices, amplitudes):
+    """Collapse adjacent exceeding bins to the highest-amplitude representative."""
+    if not indices:
+        return []
+    sorted_indices = sorted(set(int(index) for index in indices))
+    groups = []
+    current = [sorted_indices[0]]
+    for index in sorted_indices[1:]:
+        if index == current[-1] + 1:
+            current.append(index)
+        else:
+            groups.append(current)
+            current = [index]
+    groups.append(current)
+    return [max(group, key=lambda idx: amplitudes[idx]) for group in groups]
 
 class N9918AController:
     """
@@ -90,6 +255,9 @@ class N9918AController:
         self.rbw = None
         self.vbw = None
         self.current_config = None
+        self.amplitude_unit = "DBUV"
+        self.sa_corrections = DEFAULT_SA_CORRECTIONS.copy()
+        self.last_scpi_errors = []
         
     def connect(self):
         try:
@@ -120,6 +288,166 @@ class N9918AController:
             self.rm.close()
         self.connected = False
         print("Disconnected from N9918A")
+
+    def set_sa_corrections(self, **corrections):
+        """Set receiver-to-limit correction terms used by screening results."""
+        for key in DEFAULT_SA_CORRECTIONS:
+            if key in corrections and corrections[key] is not None:
+                self.sa_corrections[key] = float(corrections[key])
+        return self.sa_corrections.copy()
+
+    def correction_total_db(self):
+        return (
+            self.sa_corrections.get("cable_loss_db", 0.0)
+            + self.sa_corrections.get("antenna_factor_db", 0.0)
+            + self.sa_corrections.get("switch_loss_db", 0.0)
+            - self.sa_corrections.get("external_preamp_gain_db", 0.0)
+        )
+
+    def _write_optional(self, command, label):
+        try:
+            self.device.write(command)
+        except Exception as exc:
+            print(f"[WARN] {label} command failed ({command}): {exc}")
+
+    def _check_scpi_errors(self, context):
+        errors = []
+        for _ in range(5):
+            try:
+                response = str(self.device.query("SYST:ERR?")).strip()
+            except Exception as exc:
+                print(f"[WARN] 无法读取 SCPI 错误队列 ({context}): {exc}")
+                break
+            if response.startswith("+0") or response.startswith("0,") or "No error" in response:
+                break
+            errors.append(response)
+        self.last_scpi_errors = errors
+        if errors:
+            print(f"[WARN] SCPI 错误 ({context}): {' | '.join(errors)}")
+        return errors
+
+    def _reset_trace_for_new_sweep(self):
+        """Keep trace 1 in Clear/Write so each triggered sweep overwrites history."""
+        self.device.write(":TRAC1:TYPE CLRW")
+        self._write_optional(":TRAC2:TYPE BLAN", "blank trace 2")
+        self._write_optional(":TRAC3:TYPE BLAN", "blank trace 3")
+        self._write_optional(":TRAC4:TYPE BLAN", "blank trace 4")
+        self._write_optional(":INIT:REST", "restart trace averaging")
+
+    def clear_sa_display_state(self, blank_trace=True):
+        """Clear SA status and remove old traces from the FieldFox display."""
+        if not self.connected:
+            print("ERROR: Device not connected")
+            return False
+
+        try:
+            self.device.write("*CLS")
+            self.device.query("INST:SEL 'SA';*OPC?")
+            self.device.write("INIT:CONT OFF")
+            self.device.write(":SENS:AMPL:UNIT DBUV")
+            self.amplitude_unit = "DBUV"
+            self._reset_trace_for_new_sweep()
+            if blank_trace:
+                self.device.write(":TRAC1:TYPE BLAN")
+            errors = self._check_scpi_errors("SA manual clear")
+            return not errors
+        except Exception as e:
+            print(f"ERROR: Failed to clear SA display state - {e}")
+            return False
+
+    def _prepare_sa_screening_trace(self, clear_status=False):
+        if clear_status:
+            self.device.write("*CLS")
+        self.device.query("INST:SEL 'SA';*OPC?")
+        self.device.write("INIT:CONT OFF")
+        self.device.write(":SENS:AMPL:UNIT DBUV")
+        self.amplitude_unit = "DBUV"
+        self._write_optional(":SENS:BAND:RES:AUTO OFF", "manual RBW")
+        self._write_optional(":SENS:BAND:VID:AUTO OFF", "manual VBW")
+        self.device.write(":SENS:DET POS")
+        self._write_optional(":SENS:AVER:COUN 1", "disable averaging")
+        self._reset_trace_for_new_sweep()
+
+    def _query_float(self, command, default=None):
+        try:
+            value = float(str(self.device.query(command)).strip())
+            if math.isfinite(value):
+                return value
+        except Exception:
+            pass
+        return default
+
+    def _refresh_actual_sa_settings(self):
+        start_freq = self._query_float(":SENS:FREQ:STAR?", self.start_freq)
+        stop_freq = self._query_float(":SENS:FREQ:STOP?", self.stop_freq)
+        n_points = self._query_float(":SENS:SWE:POIN?", self.n_points)
+        rbw = self._query_float(":SENS:BAND:RES?", self.rbw)
+        vbw = self._query_float(":SENS:BAND:VID?", self.vbw)
+        if start_freq and stop_freq and stop_freq > start_freq:
+            self.start_freq = start_freq
+            self.stop_freq = stop_freq
+        if n_points and n_points >= 2:
+            self.n_points = int(round(n_points))
+        if rbw and rbw > 0:
+            self.rbw = rbw
+        if vbw and vbw > 0:
+            self.vbw = vbw
+
+    def _estimate_sweep_time(self):
+        sweep_time = self._query_float(":SENS:SWE:TIME?", None)
+        if sweep_time and sweep_time > 0:
+            return sweep_time
+        if self.start_freq and self.stop_freq:
+            return max(0.5, (self.stop_freq - self.start_freq) / 1e9 * 3.0)
+        return 1.0
+
+    def _parse_numeric_csv(self, data):
+        return [float(item.strip()) for item in str(data).replace("\n", "").split(",") if item.strip()]
+
+    def _build_frequency_axis(self):
+        try:
+            x_values = self._parse_numeric_csv(self.device.query(":TRAC1:XVAL?"))
+            if self.n_points and len(x_values) == self.n_points:
+                return x_values
+        except Exception:
+            pass
+        if not self.start_freq or not self.stop_freq or not self.n_points or self.n_points < 2:
+            raise ValueError("SA 频率轴参数不完整，请先配置 start/stop/points。")
+        freq_step = (self.stop_freq - self.start_freq) / (self.n_points - 1)
+        return [self.start_freq + i * freq_step for i in range(self.n_points)]
+
+    def _read_trace_amplitudes_dbuv(self):
+        self.device.write(":TRAC1:DATA?")
+        trace_data = self.device.read()
+        amplitudes = self._parse_numeric_csv(trace_data)
+        if self.n_points and len(amplitudes) != self.n_points:
+            raise ValueError(f"SA trace 点数不匹配：期望 {self.n_points}，实际 {len(amplitudes)}。")
+        correction_total = self.correction_total_db()
+        if correction_total:
+            amplitudes = [value + correction_total for value in amplitudes]
+        return amplitudes
+
+    def acquire_single_trace(self, reset_trace=True):
+        if reset_trace:
+            self._reset_trace_for_new_sweep()
+        self.device.write("INIT:CONT OFF")
+        try:
+            self.device.query(":INIT:IMM;*OPC?")
+        except Exception:
+            self.device.write(":INIT:IMM")
+            wait_time = max(self._estimate_sweep_time() * 1.2, 1.0)
+            print(f"[WAIT] 等待扫描完成 ({wait_time:.1f}秒)...")
+            time.sleep(wait_time)
+        frequencies = self._build_frequency_axis()
+        amplitudes = self._read_trace_amplitudes_dbuv()
+        return frequencies, amplitudes
+
+    def has_emi_option(self):
+        try:
+            catalog = str(self.device.query("INST:CAT?")).upper()
+            return "EMI" in catalog
+        except Exception:
+            return False
     
     def configure_settings(self, config_name):
         """
@@ -149,10 +477,7 @@ class N9918AController:
             
         try:
             print(f"[CONFIG] 配置设备参数: {config_name}")
-            
-            # 关闭连续扫描
-            self.device.write("INIT:CONT OFF")
-            time.sleep(0.5)
+            self._prepare_sa_screening_trace(clear_status=True)
             
             # Set frequency range
             self.device.write(f":SENS:FREQ:STAR {start_freq}")
@@ -167,16 +492,18 @@ class N9918AController:
             print(f"[POINTS] 采样点数: {n_points}")
             
             # Set RBW and VBW
+            self._write_optional(":SENS:BAND:RES:AUTO OFF", "manual RBW")
             self.device.write(f":SENS:BAND:RES {rbw}")
             time.sleep(0.5)
+            self._write_optional(":SENS:BAND:VID:AUTO OFF", "manual VBW")
             self.device.write(f":SENS:BAND:VID {vbw}")
             time.sleep(0.5)
             print(f"[BAND]  RBW: {rbw}Hz, VBW: {vbw}Hz")
             
-            # Set Detector to Sample
-            self.device.write(":SENS:DET SAMPLE")
+            # Positive detector is the safer screening prescan choice for narrow peaks.
+            self.device.write(":SENS:DET POS")
             time.sleep(0.2)
-            print("[DETECTOR] Detector: Sample")
+            print("[DETECTOR] Detector: Positive Peak")
             
             # Set Internal Amplifier ON
             self.device.write(":SENS:POW:GAIN:STAT ON")
@@ -195,6 +522,10 @@ class N9918AController:
             self.rbw = rbw
             self.vbw = vbw
             self.current_config = config_name
+            self.amplitude_unit = "DBUV"
+            self._reset_trace_for_new_sweep()
+            self._refresh_actual_sa_settings()
+            self._check_scpi_errors("SA configure")
             
             print("[OK] 参数配置完成! (连续扫描已暂停)")
             return True
@@ -212,28 +543,9 @@ class N9918AController:
             return None, None
             
         try:
-            # 触发单次扫描
-            try:
-                self.device.query(":INIT:IMM;*OPC?")
-            except Exception:
-                self.device.write(":INIT:IMM")
-                try:
-                    sweep_time = float(self.device.query(":SENS:SWE:TIME?"))
-                    wait_time = max(sweep_time * 1.2, 1.0)  # 等待1.2倍扫描时间或至少1秒
-                except Exception:
-                    wait_time = max(2.0, (self.stop_freq - self.start_freq) / 1e9 * 3)
-                print(f"[WAIT] 等待扫描完成 ({wait_time:.1f}秒)...")
-                time.sleep(wait_time)
-            
-            # Read trace data
-            self.device.write(":TRAC:DATA?")
-            trace_data = self.device.read()
-            amplitudes_dBuv = [float(x) for x in trace_data.split(",")]
-            
-            # Calculate frequency array
-            freq_step = (self.stop_freq - self.start_freq) / (self.n_points - 1)
-            frequencies = [self.start_freq + i * freq_step for i in range(self.n_points)]
-            
+            self._prepare_sa_screening_trace(clear_status=True)
+            frequencies, amplitudes_dBuv = self.acquire_single_trace(reset_trace=True)
+            self._check_scpi_errors("SA single trace")
             return frequencies, amplitudes_dBuv
             
         except Exception as e:
@@ -259,7 +571,10 @@ class N9918AController:
             "stop_freq": self.stop_freq,
             "n_points": self.n_points,
             "rbw": self.rbw,
-            "vbw": self.vbw
+            "vbw": self.vbw,
+            "amplitude_unit": self.amplitude_unit,
+            "sa_corrections": self.sa_corrections.copy(),
+            "last_scpi_errors": list(self.last_scpi_errors),
         }
 
 
@@ -323,7 +638,11 @@ class N9918AController:
                 "data_points": len(time_series_data[0]['amplitudes']) if time_series_data else 0,
                 "rbw": self.rbw if self.rbw else 100e3,
                 "start_time": time_series_data[0]['timestamp'] if time_series_data else 0,
-                "end_time": time_series_data[-1]['timestamp'] if time_series_data else 0
+                "end_time": time_series_data[-1]['timestamp'] if time_series_data else 0,
+                "amplitude_unit": self.amplitude_unit,
+                "corrections": self.sa_corrections.copy(),
+                "correction_total_db": self.correction_total_db(),
+                "screening_mode": True,
             }
             
             # 添加测量摘要
@@ -333,7 +652,15 @@ class N9918AController:
                 "data_points": len(time_series_data[0]['amplitudes']) if time_series_data else 0,
                 "total_samples": len(time_series_data),
                 "modes_computed": detector_modes,
-                "measurement_time": time.strftime("%Y-%m-%d %H:%M:%S")
+                "measurement_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "screening_mode": True,
+                "quasi_peak_estimated": True,
+                "limit_note": SCREENING_LIMIT_NOTE,
+            }
+            results["detector_notes"] = {
+                "PEAK": "Max of synchronized positive-peak SA sweeps.",
+                "AVERAGE": "Voltage-domain screening average, not a formal EMI average detector.",
+                "QUASI_PEAK": "Estimated in software from synchronized sweeps; use FieldFox EMI Option 361 for formal QPD.",
             }
             
             print(f"   [TIME]  计算用时: {calculation_time:.1f} 秒")
@@ -349,53 +676,26 @@ class N9918AController:
 
     def collect_emc_time_series(self, duration_seconds=15, should_stop=None):
         """
-        稳定版时间序列数据采集 - 支持长时间采样
+        稳定版时间序列数据采集 - 每个样本均等待完整单次 sweep。
         """
         if not self.connected:
             print("ERROR: Device not connected")
             return []
         
         print(f"[LOOP] 开始时间序列数据采集 ({duration_seconds} 秒)")
-        
+        original_timeout = self.device.timeout
         try:
-            # 设置为SAMPLE模式
-            self.device.write(":SENS:DET SAMP")
-            time.sleep(0.2)
-            
-            # 设置更长的超时时间用于长时间采样
-            original_timeout = self.device.timeout
-            self.device.timeout = 30000  # 30秒超时
-            
-            # 开启连续扫描
-            self.device.write("INIT:CONT ON")
-            time.sleep(0.5)
-            
-            # 动态调整采样间隔 - 根据测量时长和RBW
-            if duration_seconds <= 30:
-                sample_interval = 0.3  # 短时间采样用0.3秒，更密集
-            elif duration_seconds <= 120:
-                sample_interval = 0.8  # 中等时间用0.8秒
-            else:
-                sample_interval = 1.5  # 长时间采样用1.5秒
+            self._prepare_sa_screening_trace(clear_status=True)
+            sweep_time = self._estimate_sweep_time()
+            sample_interval = max(sweep_time * 1.05, 0.25)
+            max_samples = max(1, int(duration_seconds / sample_interval))
+            self.device.timeout = max(original_timeout or 0, int((sweep_time + 10.0) * 1000))
+            print(f"   [TIME]  仪器 sweep time: {sweep_time:.3f}s")
+            print(f"   [TIME]  采样间隔: {sample_interval:.3f}s, 目标采样次数: {max_samples}")
 
-            # 根据RBW调整 - RBW越小，需要更长的稳定时间
-            if hasattr(self, 'rbw') and self.rbw:
-                if self.rbw <= 1000:  # 1kHz以下
-                    sample_interval *= 1.5
-                elif self.rbw <= 10000:  # 10kHz以下
-                    sample_interval *= 1.2
-
-            print(f"   [TIME]  采样间隔: {sample_interval}s (优化后), 目标采样次数: {int(duration_seconds / sample_interval)}")
-            
             time_series_data = []
             start_time = time.time()
-            next_sample_time = start_time + sample_interval
             sample_count = 0
-            max_samples = int(duration_seconds / sample_interval)
-            
-            print(f"   [TIME]  采样间隔: {sample_interval}s, 目标采样次数: {max_samples}")
-            
-            # 用于检测卡死的变量
             last_successful_time = start_time
             consecutive_failures = 0
             max_consecutive_failures = 3
@@ -405,120 +705,64 @@ class N9918AController:
                     print("   [STOP]  用户请求停止采样")
                     break
 
-                current_time = time.time()
-                
-                if current_time >= next_sample_time:
-                    try:
-                        # 每10次采样后清理一次通信缓冲区
-                        if sample_count % 10 == 0 and sample_count > 0:
-                            print(f"   [CONFIG] 清理通信缓冲区 (采样 #{sample_count})")
-                            self.device.write("*CLS")  # 清除状态
-                            time.sleep(0.1)
-                        
-                        # 每20次采样后重新启动连续扫描
-                        if sample_count % 20 == 0 and sample_count > 0:
-                            print(f"   [LOOP] 重新启动连续扫描 (采样 #{sample_count})")
-                            self.device.write("INIT:CONT OFF")
-                            time.sleep(0.2)
-                            self.device.write("INIT:CONT ON")
-                            time.sleep(0.5)
-                        
-                        # 设置较短的临时超时用于单次读取
-                        self.device.timeout = 10000  # 10秒
-                        
-                        # 读取当前trace数据
-                        sample_start_time = time.time()
-                        self.device.write(":TRACE:DATA?")
-                        trace_data = self.device.read()
-                        
-                        # 检查读取是否超时
-                        read_duration = time.time() - sample_start_time
-                        if read_duration > 8:  # 如果读取超过8秒，认为可能有问题
-                            print(f"   [WARN]  读取耗时异常: {read_duration:.2f}s")
-                        
-                        amplitudes = [float(x) for x in trace_data.split(",")]
-                        
-                        # 验证数据完整性
-                        if len(amplitudes) != self.n_points:
-                            print(f"   [WARN]  数据点数不匹配: 期望{self.n_points}, 实际{len(amplitudes)}")
-                            consecutive_failures += 1
-                            if consecutive_failures >= max_consecutive_failures:
-                                print(f"   [ERROR] 连续失败{consecutive_failures}次，停止采样")
-                                break
-                            continue
-                        
-                        # 第一次采样时计算频率数组
-                        if not time_series_data:
-                            freq_step = (self.stop_freq - self.start_freq) / (self.n_points - 1)
-                            frequencies = [self.start_freq + i * freq_step for i in range(self.n_points)]
-                        else:
-                            frequencies = time_series_data[0]['frequencies']
-                        
-                        # 记录采样
-                        sample_record = {
+                sample_start_time = time.time()
+                try:
+                    frequencies, amplitudes = self.acquire_single_trace(reset_trace=True)
+                    read_duration = time.time() - sample_start_time
+                    if read_duration > max(sweep_time * 3, 8.0):
+                        print(f"   [WARN]  单次 sweep+读取耗时异常: {read_duration:.2f}s")
+
+                    sample_count += 1
+                    current_time = time.time()
+                    time_series_data.append(
+                        {
                             'timestamp': current_time - start_time,
                             'frequencies': frequencies,
-                            'amplitudes': amplitudes
+                            'amplitudes': amplitudes,
                         }
-                        time_series_data.append(sample_record)
-                        sample_count += 1
-                        consecutive_failures = 0  # 重置失败计数
-                        last_successful_time = current_time
-                        
-                        # 显示进度
-                        progress = (sample_count / max_samples) * 100
-                        if sample_count % 5 == 0 or sample_count <= 10:
-                            elapsed = current_time - start_time
-                            remaining = duration_seconds - elapsed
-                            print(f"   [DATA] 采样 #{sample_count}/{max_samples} ({progress:.1f}%) "
-                                f"已用时: {elapsed:.1f}s, 剩余: {remaining:.1f}s")
-                        
-                        # 更新下次采样时间
-                        next_sample_time = current_time + sample_interval
-                        
-                        # 恢复原始超时设置
-                        self.device.timeout = original_timeout
-                        
-                    except pyvisa.errors.VisaIOError as e:
-                        consecutive_failures += 1
-                        print(f"   [WARN]  VISA通信错误 (第{consecutive_failures}次): {e}")
-                        
-                        if consecutive_failures >= max_consecutive_failures:
-                            print(f"   [ERROR] 连续通信失败{consecutive_failures}次，尝试重新连接...")
-                            # 尝试重新初始化连接
-                            try:
-                                self.device.write("INIT:CONT OFF")
-                                time.sleep(1)
-                                self.device.write("*CLS")
-                                time.sleep(0.5)
-                                self.device.write("INIT:CONT ON")
-                                time.sleep(0.5)
-                                consecutive_failures = 0
-                                print(f"   [OK] 重新连接成功")
-                            except:
-                                print(f"   [ERROR] 重新连接失败，停止采样")
-                                break
-                        
-                        # 等待一段时间后重试
-                        time.sleep(1)
-                        
-                    except Exception as e:
-                        consecutive_failures += 1
-                        print(f"   [WARN]  采样失败 (第{consecutive_failures}次): {e}")
-                        
-                        if consecutive_failures >= max_consecutive_failures:
-                            print(f"   [ERROR] 连续失败{consecutive_failures}次，停止采样")
+                    )
+                    consecutive_failures = 0
+                    last_successful_time = current_time
+
+                    progress = (sample_count / max_samples) * 100
+                    if sample_count % 5 == 0 or sample_count <= 10:
+                        elapsed = current_time - start_time
+                        remaining = max(0.0, duration_seconds - elapsed)
+                        print(
+                            f"   [DATA] 采样 #{sample_count}/{max_samples} ({progress:.1f}%) "
+                            f"已用时: {elapsed:.1f}s, 剩余: {remaining:.1f}s"
+                        )
+
+                    next_sample_time = sample_start_time + sample_interval
+                    sleep_time = max(0.0, next_sample_time - time.time())
+                    while sleep_time > 0:
+                        if should_stop and should_stop():
                             break
-                        
-                        time.sleep(0.5)
+                        time.sleep(min(sleep_time, 0.5))
+                        sleep_time = max(0.0, next_sample_time - time.time())
+
+                except pyvisa.errors.VisaIOError as e:
+                    consecutive_failures += 1
+                    print(f"   [WARN]  VISA通信错误 (第{consecutive_failures}次): {e}")
+                    self._check_scpi_errors("SA sampling VISA error")
+                    if consecutive_failures >= max_consecutive_failures:
+                        print(f"   [ERROR] 连续通信失败{consecutive_failures}次，停止采样")
+                        break
+                    time.sleep(1)
+
+                except Exception as e:
+                    consecutive_failures += 1
+                    print(f"   [WARN]  采样失败 (第{consecutive_failures}次): {e}")
+                    self._check_scpi_errors("SA sampling error")
+                    if consecutive_failures >= max_consecutive_failures:
+                        print(f"   [ERROR] 连续失败{consecutive_failures}次，停止采样")
+                        break
+                    time.sleep(0.5)
                 
                 # 检查是否长时间无响应
-                if current_time - last_successful_time > 30:  # 30秒无成功采样
+                if time.time() - last_successful_time > max(30.0, sweep_time * 5):
                     print(f"   [ERROR] 设备长时间无响应，停止采样")
                     break
-                
-                # 短暂等待
-                time.sleep(0.05)
             
             # 停止连续扫描
             try:
@@ -584,11 +828,11 @@ def calculate_emc_detector_modes(time_series_data, detector_type="QUASI_PEAK"):
         if detector_type == "PEAK":
             detector_value = max(values)
         elif detector_type == "QUASI_PEAK":
-            # 传递频率信息给准峰值计算
+            # 软件估算准峰值，正式 QPD 应优先使用仪器 EMI Option 361。
             current_freq = frequencies[freq_idx]
             detector_value = calculate_quasi_peak_value(times, values, current_freq)
         elif detector_type == "AVERAGE":
-            detector_value = sum(values) / len(values)
+            detector_value = linear_average_dbuv(values)
         else:
             detector_value = values[-1] if values else 0
         
@@ -599,12 +843,10 @@ def calculate_emc_detector_modes(time_series_data, detector_type="QUASI_PEAK"):
 
 def calculate_quasi_peak_value(times, values, frequency_hz=None):
     """
-    改进的准峰值计算 - 根据频率选择正确的时间常数
+    软件准峰值估算 - 根据频率选择时间常数，并在电压域积分。
     """
-    import numpy as np
-    
     if len(times) <= 1:
-        return max(0, values[0]) if values else 0
+        return values[0] if values else 0
     
     # 根据CISPR 16标准选择时间常数（根据频率）
     if frequency_hz is not None:
@@ -623,8 +865,11 @@ def calculate_quasi_peak_value(times, values, frequency_hz=None):
         rise_time = 1e-3     # 1ms
         decay_time = 160e-3  # 160ms
     
-    # 数据预处理和排序
-    time_value_pairs = [(float(t), max(0, float(v))) for t, v in zip(times, values)]
+    # 数据预处理和排序：dBuV 先转线性电压，避免在 dB 域积分。
+    time_value_pairs = [
+        (float(t), dbuv_to_microvolts(v))
+        for t, v in zip(times, values)
+    ]
     time_value_pairs.sort(key=lambda x: x[0])
     
     # 计算数据的基本统计信息
@@ -657,11 +902,11 @@ def calculate_quasi_peak_value(times, values, frequency_hz=None):
             min_allowed = max(current_value, avg_value * 0.7)  # 不低于平均值的70%
             qp_value = max(decayed_value, min_allowed)
     
-    # 最终约束：准峰值应该在合理范围内
-    qp_value = max(qp_value, avg_value * 0.8)  # 至少是平均值的80%
-    qp_value = min(qp_value, max_value)        # 不超过峰值
+    # 最终约束：筛查估算值保持在平均与峰值之间。
+    qp_value = max(qp_value, avg_value * 0.8)
+    qp_value = min(qp_value, max_value)
     
-    return max(0, qp_value)
+    return microvolts_to_dbuv(qp_value)
 
 def save_emi_measurement_data(frequencies_dict, filename_prefix=None):
     """
@@ -768,56 +1013,14 @@ def save_emi_measurement_data(frequencies_dict, filename_prefix=None):
     
     return saved_files
 
-# 修正后的EMC标准限值函数
-def get_fcc_ce_limits(freq_hz):
+def get_fcc_ce_limits(freq_hz, detector_type="QUASI_PEAK"):
     """
-    获取FCC和CE标准限值 (单位: dBuV)
+    获取筛查用 FCC 和 CE 参考限值。
+
+    返回值保持兼容旧调用；完整口径请使用 get_emission_limit_info()。
     """
-    freq_mhz = freq_hz / 1e6
-    
-    # FCC Part 15 Class B 准峰值限值
-    if 0.009 <= freq_mhz < 0.050:      # 9kHz-50kHz
-        fcc_limit = 34  # 例如值，实际需要查表
-    elif 0.050 <= freq_mhz < 0.150:    # 50kHz-150kHz
-        fcc_limit = 40
-    elif 0.150 <= freq_mhz < 0.500:    # 150kHz-500kHz
-        fcc_limit = 40
-    elif 0.500 <= freq_mhz < 1.705:    # 500kHz-1.705MHz
-        fcc_limit = 40
-    elif 1.705 <= freq_mhz < 30:       # 1.705MHz-30MHz
-        fcc_limit = 40
-    elif 30 <= freq_mhz < 88:          # 30MHz-88MHz
-        fcc_limit = 40
-    elif 88 <= freq_mhz < 216:         # 88MHz-216MHz
-        fcc_limit = 40
-    elif 216 <= freq_mhz < 960:        # 216MHz-960MHz
-        fcc_limit = 46
-    elif 960 <= freq_mhz <= 10000:     # 960MHz-10GHz
-        fcc_limit = 40
-    else:
-        fcc_limit = 120  # 超出范围设为高值
-    
-    # EN 55032 Class B 限值 (更准确的分段)
-    if 0.009 <= freq_mhz < 0.050:      # 9kHz-50kHz
-        ce_limit = 34
-    elif 0.050 <= freq_mhz < 0.150:    # 50kHz-150kHz
-        ce_limit = 40
-    elif 0.150 <= freq_mhz < 0.500:    # 150kHz-500kHz
-        ce_limit = 40
-    elif 0.500 <= freq_mhz < 1.705:    # 500kHz-1.705MHz
-        ce_limit = 40
-    elif 1.705 <= freq_mhz < 30:       # 1.705MHz-30MHz
-        ce_limit = 40
-    elif 30 <= freq_mhz < 230:         # 30MHz-230MHz
-        ce_limit = 40
-    elif 230 <= freq_mhz < 1000:       # 230MHz-1GHz
-        ce_limit = 47
-    elif 1000 <= freq_mhz <= 10000:    # 1GHz-10GHz
-        ce_limit = 40
-    else:
-        ce_limit = 120  # 超出范围设为高值
-    
-    return fcc_limit, ce_limit
+    info = get_emission_limit_info(freq_hz, detector_type=detector_type)
+    return info["fcc_limit"], info["ce_limit"]
 
 # 峰值检测函数
 def find_peaks_manual(data, distance=5, prominence=3):
@@ -846,7 +1049,13 @@ def find_peaks_manual(data, distance=5, prominence=3):
     peaks.sort(key=lambda x: data[x], reverse=True)
     return peaks
 
-def post_process_peak_search(frequencies, amplitudes, peak_distance=30, min_prominence=2):
+def post_process_peak_search(
+    frequencies,
+    amplitudes,
+    peak_distance=30,
+    min_prominence=2,
+    detector_type="QUASI_PEAK",
+):
     """
     改进的后处理峰值搜索 - 更智能的峰值检测算法
     """
@@ -885,16 +1094,16 @@ def post_process_peak_search(frequencies, amplitudes, peak_distance=30, min_prom
             prominence=max(0.3, dynamic_prominence * 0.3),
         )
     
-    # 第三级：检测所有超过限值的点（即使不是峰值）
-    threshold_peaks = []
+    # 第三级：检测超限连续区域，并用区域内最高点代表，避免一整段超限刷屏。
+    threshold_indices = []
     for i in range(len(amplitudes)):
         freq_hz = frequencies[i]
         amp_dbuv = amplitudes[i]
-        fcc_limit, ce_limit = get_fcc_ce_limits(freq_hz)
+        fcc_limit, ce_limit = get_fcc_ce_limits(freq_hz, detector_type=detector_type)
         
-        # 如果点超过任一限值，则添加为峰值
         if amp_dbuv > fcc_limit or amp_dbuv > ce_limit:
-            threshold_peaks.append(i)
+            threshold_indices.append(i)
+    threshold_peaks = collapse_contiguous_indices(threshold_indices, amplitudes)
     
     # 合并峰值并去重
     all_peaks = list(set(list(primary_peaks) + list(secondary_peaks) + threshold_peaks))
@@ -911,7 +1120,9 @@ def post_process_peak_search(frequencies, amplitudes, peak_distance=30, min_prom
             
         amp_dbuv = amplitudes[idx]
         freq_hz = frequencies[idx]
-        fcc_limit, ce_limit = get_fcc_ce_limits(freq_hz)
+        limit_info = get_emission_limit_info(freq_hz, detector_type=detector_type)
+        fcc_limit = limit_info["fcc_limit"]
+        ce_limit = limit_info["ce_limit"]
         
         # 计算裕量（相对于限值）
         fcc_margin = amp_dbuv - fcc_limit
@@ -964,7 +1175,12 @@ def post_process_peak_search(frequencies, amplitudes, peak_distance=30, min_prom
             'ce_margin': ce_margin,
             'exceed_fcc': fcc_margin > 0,
             'exceed_ce': ce_margin > 0,
-            'importance_score': score
+            'importance_score': score,
+            'limit_unit': limit_info["unit"],
+            'limit_measurement_type': limit_info["measurement_type"],
+            'fcc_detector': limit_info["fcc_detector"],
+            'ce_detector': limit_info["ce_detector"],
+            'limit_note': limit_info["note"],
         }
         
         # 确保所有超过限值的点都被包含
