@@ -93,9 +93,9 @@ http://127.0.0.1:5000
    - OPEN: `B2C1`，先执行 `CORR:COLL:METH:QCAL:CAL 1`，再执行 `CORR:COLL:INT 1;*OPC?`
    - LOAD: `B1C1`，执行 `CORR:COLL:LOAD 1;*OPC?`
    - SAVE/ANTENNA: 执行 `CORR:COLL:SAVE 0`，再切到 `B2C2`
-4. 测量读取 `CALC:DATA:FDATa?` 得到 S11 dB，读取 `CALC:DATA:SDATA?` 得到复数 Gamma；普通预设显示 S11 曲线、实际中心谷、理想频点对比、理想频点附近损耗、回波损耗、驻波比、绝对/相对 3dB/10dB 带宽和 Smith Chart。
+4. 测量读取 `CALC:DATA:FDATa?` 得到 S11 dB，读取 `CALC:DATA:SDATA?` 得到复数 Gamma；普通预设显示 S11 曲线、VSWR 曲线、实际中心谷、理想频点对比、理想频点附近损耗、回波损耗、驻波比、绝对/相对 3dB/10dB 带宽和带 50Ω 阻抗网格的 Smith Chart。
 5. 带宽有两套口径：绝对阈值 `S11 <= -3dB/-10dB`，相对谷值 `S11 <= valley+3dB/valley+10dB`，端点用线性插值估算。
-6. NA 报告导出为 A4 纵向 PDF，包含 M5Stack logo、项目/工程师信息、理想频点与实际中心谷偏移、端点 S11、回波损耗、驻波比、S11 曲线、Smith Chart 和谷值列表。
+6. NA 报告导出为 A4 纵向 PDF，包含 M5Stack logo、项目/工程师信息、理想频点与实际中心谷偏移、端点 S11、回波损耗、驻波比、S11 曲线、VSWR 曲线、Smith Chart 阻抗标记和谷值列表。
 
 ## 代码结构
 
@@ -121,7 +121,7 @@ assets/m5logo2022.png   # PDF 报告 logo
 - 单次扫描示例使用 `INIT:IMM;*OPC?` 后读取 `TRACE:DATA?`。
 - SA/PAA/NF 模式读取数据使用 `TRACe:DATA?`。
 - 频率范围、点数、带宽使用 `SENS:FREQ:START`、`SENS:FREQ:STOP`、`SENS:SWE:POIN`、`SENS:BAND...` 命令族。
-- NA 模式切换、S11 配置和读取使用 `INST:SEL "NA";*OPC?`、`CALC:PAR:DEF S11`、`CALC:FORM MLOG`、`INIT:IMM;*OPC?`、`CALC:DATA:FDATa?` 和 `CALC:DATA:SDATA?`。
+- NA 模式切换、S11 配置和读取使用 `INST:SEL "NA";*OPC?`、`CALC:PAR:DEF S11`、`CALC:FORM MLOG`、`INIT:IMM;*OPC?`、`CALC:DATA:FDATa?` 和 `CALC:DATA:SDATA?`；编程手册也支持 `CALC:FORM SMITh/SWR` 及 `MMEM:STORe:IMAGe` 保存当前仪器屏幕 PNG，但本项目报告默认用 `SDATA?` 自绘 Smith/VSWR，便于统一标注和离线验证。
 - QuickCal/校准采集使用 `CORR:COLL:METH:QCAL:CAL 1`、`CORR:COLL:INT 1;*OPC?`、`CORR:COLL:LOAD 1;*OPC?`、`CORR:COLL:SAVE 0`，OPEN/INT 必须先于 LOAD。
 
 当前代码已按这些要点保持流程：连接时等待 SA 模式切换完成，单次扫描优先使用 `:INIT:IMM;*OPC?`，长时间采样保留连续扫描读取 trace 的现有稳定流程。

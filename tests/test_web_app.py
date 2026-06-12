@@ -102,8 +102,10 @@ class WebAppSmokeTest(unittest.TestCase):
             self.assertIn("3dB / 10dB 双口径带宽".encode("utf-8"), page.data)
             self.assertIn("回波损耗".encode("utf-8"), page.data)
             self.assertIn("VSWR".encode("utf-8"), page.data)
+            self.assertIn("VSWR 驻波比曲线".encode("utf-8"), page.data)
             self.assertIn("中心与带宽端点详情".encode("utf-8"), page.data)
             self.assertIn("理想频点附近损耗".encode("utf-8"), page.data)
+            self.assertIn("Smith Chart 与阻抗".encode("utf-8"), page.data)
         finally:
             page.close()
 
@@ -111,6 +113,8 @@ class WebAppSmokeTest(unittest.TestCase):
         self.assertIn('const switchOrder = ["A", "B", "D", "C"];', app_js)
         self.assertIn("pos-one", app_js)
         self.assertIn("pos-two", app_js)
+        self.assertIn("renderVswr", app_js)
+        self.assertIn("drawSmithGrid", app_js)
 
         presets = self.client.get("/api/presets").get_json()
         self.assertTrue(presets["ok"])
@@ -384,6 +388,9 @@ class NAAlgorithmTest(unittest.TestCase):
         self.assertTrue(result["target_window"])
         self.assertTrue(result["points_of_interest"])
         self.assertTrue(result["smith"]["markers"])
+        self.assertEqual(result["smith"]["reference_ohm"], 50.0)
+        self.assertTrue(any(marker["type"] == "target" for marker in result["smith"]["markers"]))
+        self.assertTrue(any("impedance_label" in marker for marker in result["smith"]["markers"]))
 
     def test_full_sweep_lists_multiple_valleys_without_smith(self):
         frequencies = frequency_axis(1e6, 10e6, 10)

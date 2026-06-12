@@ -70,7 +70,9 @@ const elements = {
   naSaveBtn: $("naSaveBtn"),
   naExportBtn: $("naExportBtn"),
   naS11Canvas: $("naS11Canvas"),
+  naVswrCanvas: $("naVswrCanvas"),
   smithCanvas: $("smithCanvas"),
+  smithMarkerRows: $("smithMarkerRows"),
   naPrimaryText: $("naPrimaryText"),
   naTargetText: $("naTargetText"),
   bandwidthGrid: $("bandwidthGrid"),
@@ -402,14 +404,12 @@ function renderNaS11(series, primaryValley, bandwidths = {}, points = []) {
   if (targetPoint) {
     const px = x(targetPoint.frequency_mhz);
     drawVertical(ctx, px, pad.top, height - pad.bottom, pointColors.target, [6, 5]);
-    drawTag(ctx, `理想 ${targetPoint.frequency_mhz.toFixed(3)}MHz / RL ${formatDb(targetPoint.return_loss_db)}`, clamp(px + 8, pad.left, width - 260), pad.top + 10, pointColors.target);
   }
   if (centerPoint) {
     const px = x(centerPoint.frequency_mhz);
     drawVertical(ctx, px, pad.top, height - pad.bottom, pointColors.center, [2, 4]);
-    const yOffset = targetPoint && Math.abs(x(targetPoint.frequency_mhz) - px) < 180 ? 44 : 10;
-    drawTag(ctx, `实际 ${centerPoint.frequency_mhz.toFixed(3)}MHz / RL ${formatDb(centerPoint.return_loss_db)}`, clamp(px + 8, pad.left, width - 260), pad.top + yOffset, pointColors.center);
   }
+  const labelItems = [];
   for (const point of plottedPoints) {
     const px = x(point.frequency_mhz);
     const py = y(point.s11_db);
@@ -417,7 +417,17 @@ function renderNaS11(series, primaryValley, bandwidths = {}, points = []) {
     ctx.beginPath();
     ctx.arc(px, py, point.type === "center" ? 6 : 4.5, 0, Math.PI * 2);
     ctx.fill();
+    if (["center", "target", "absolute_3db_left", "absolute_3db_right", "absolute_10db_left", "absolute_10db_right"].includes(point.type)) {
+      labelItems.push({
+        anchorX: px,
+        anchorY: py,
+        type: point.type,
+        color: pointColors[point.type],
+        text: markerLabel(point, "s11"),
+      });
+    }
   }
+  drawSmartTags(ctx, labelItems, pad, width, height);
 
   if (!plottedPoints.length && primaryValley) {
     const px = x(primaryValley.frequency_mhz);
@@ -431,6 +441,85 @@ function renderNaS11(series, primaryValley, bandwidths = {}, points = []) {
   drawAxisLabels(ctx, width, height, pad, `${minX.toFixed(3)} MHz`, `${maxX.toFixed(3)} MHz`, "S11 dB");
 }
 
+function renderVswr(series, points = []) {
+  const { ctx, width, height } = prepareCanvas(elements.naVswrCanvas);
+  ctx.clearRect(0, 0, width, height);
+
+  const plotPairs = (series?.frequency_mhz || [])
+    .map((freq, index) => ({ freq, vswr: series.vswr?.[index] }))
+    .filter((point) => point.vswr != null && Number.isFinite(Number(point.vswr)));
+  if (!plotPairs.length) {
+    drawEmpty(ctx, "等待 VSWR 驻波比数据...", width, height);
+    return;
+  }
+
+  const xVals = plotPairs.map((point) => point.freq);
+  const rawYVals = plotPairs.map((point) => Number(point.vswr));
+  const minX = Math.min(...xVals);
+  const maxX = Math.max(...xVals);
+  const yCap = vswrPlotCap(rawYVals);
+  const yVals = rawYVals.map((value) => Math.min(value, yCap));
+  const pad = { left: 70, right: 30, top: 30, bottom: 52 };
+  const useLog = maxX / Math.max(minX, 0.001) > 4;
+  const { x, y } = scaledPlotters(minX, maxX, 1, yCap, width, height, pad, useLog);
+
+  drawGrid(ctx, width, height, pad);
+  drawLine(ctx, xVals, yVals, x, y, "#23744a", 2.4);
+
+  const thresholds = [
+    { value: vswrFromS11Db(-10), color: "#b7442e", dash: [4, 5], label: "S11=-10dB" },
+    { value: vswrFromS11Db(-3), color: "#d9822b", dash: [8, 6], label: "S11=-3dB" },
+  ];
+  for (const item of thresholds) {
+    if (item.value > yCap) continue;
+    drawHorizontal(ctx, y(item.value), pad.left, width - pad.right, item.color, item.dash);
+    ctx.fillStyle = item.color;
+    ctx.font = "12px Cascadia Code, monospace";
+    ctx.fillText(`${item.label} / ${item.value.toFixed(3)}`, width - pad.right - 132, y(item.value) - 6);
+  }
+
+  const pointColors = {
+    center: "#b7442e",
+    target: "#23744a",
+    absolute_3db_left: "#d9822b",
+    absolute_3db_right: "#d9822b",
+    absolute_10db_left: "#b7442e",
+    absolute_10db_right: "#b7442e",
+  };
+  const plottedPoints = (points || []).filter((point) => pointColors[point.type] && point.vswr != null);
+  const centerPoint = plottedPoints.find((point) => point.type === "center");
+  const targetPoint = plottedPoints.find((point) => point.type === "target");
+  if (targetPoint) {
+    const px = x(targetPoint.frequency_mhz);
+    drawVertical(ctx, px, pad.top, height - pad.bottom, pointColors.target, [6, 5]);
+  }
+  if (centerPoint) {
+    const px = x(centerPoint.frequency_mhz);
+    drawVertical(ctx, px, pad.top, height - pad.bottom, pointColors.center, [2, 4]);
+  }
+  const labelItems = [];
+  for (const point of plottedPoints) {
+    const px = x(point.frequency_mhz);
+    const py = y(Math.min(Number(point.vswr), yCap));
+    ctx.fillStyle = pointColors[point.type];
+    ctx.beginPath();
+    ctx.arc(px, py, point.type === "center" ? 6 : 4.5, 0, Math.PI * 2);
+    ctx.fill();
+    if (["center", "target", "absolute_3db_left", "absolute_3db_right", "absolute_10db_left", "absolute_10db_right"].includes(point.type)) {
+      labelItems.push({
+        anchorX: px,
+        anchorY: py,
+        type: point.type,
+        color: pointColors[point.type],
+        text: markerLabel(point, "vswr"),
+      });
+    }
+  }
+  drawSmartTags(ctx, labelItems, pad, width, height);
+
+  drawAxisLabels(ctx, width, height, pad, `${minX.toFixed(3)} MHz`, `${maxX.toFixed(3)} MHz`, "VSWR");
+}
+
 function renderSmith(smith, isFullSweep) {
   const { ctx, width, height } = prepareCanvas(elements.smithCanvas, 520, 420);
   ctx.clearRect(0, 0, width, height);
@@ -441,26 +530,16 @@ function renderSmith(smith, isFullSweep) {
 
   ctx.fillStyle = "rgba(255, 255, 255, 0.62)";
   ctx.fillRect(0, 0, width, height);
-  ctx.strokeStyle = "rgba(31,57,63,.18)";
-  ctx.lineWidth = 1;
-  for (const fraction of [0.25, 0.5, 0.75, 1]) {
-    ctx.beginPath();
-    ctx.arc(cx, cy, r * fraction, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-  ctx.beginPath();
-  ctx.moveTo(cx - r, cy);
-  ctx.lineTo(cx + r, cy);
-  ctx.moveTo(cx, cy - r);
-  ctx.lineTo(cx, cy + r);
-  ctx.stroke();
+  drawSmithGrid(ctx, cx, cy, r, smith?.reference_ohm || 50);
 
   if (isFullSweep) {
     drawCentered(ctx, "全扫宽结果不显示 Smith Chart", width, height);
+    renderSmithMarkers(null, true);
     return;
   }
   if (!smith || !smith.real?.length) {
     drawCentered(ctx, "等待复数 Gamma 数据...", width, height);
+    renderSmithMarkers(null, false);
     return;
   }
 
@@ -477,20 +556,61 @@ function renderSmith(smith, isFullSweep) {
   });
   ctx.stroke();
 
+  const smithLabels = [];
   for (const marker of smith.markers || []) {
     if (marker.real == null || marker.imag == null) continue;
     const isCenter = marker.type === "center";
-    ctx.fillStyle = isCenter ? "#b7442e" : "#d9822b";
+    const isTarget = marker.type === "target";
+    ctx.fillStyle = isCenter ? "#b7442e" : isTarget ? "#23744a" : "#d9822b";
+    const px = toX(marker.real);
+    const py = toY(marker.imag);
     ctx.beginPath();
-    ctx.arc(toX(marker.real), toY(marker.imag), isCenter ? 5.5 : 3.8, 0, Math.PI * 2);
+    ctx.arc(px, py, isCenter || isTarget ? 5.5 : 3.8, 0, Math.PI * 2);
     ctx.fill();
+    if (["center", "target", "absolute_3db_left", "absolute_3db_right"].includes(marker.type)) {
+      smithLabels.push({
+        anchorX: px,
+        anchorY: py,
+        type: marker.type,
+        color: ctx.fillStyle,
+        text: `${markerShortLabel(marker.type, marker.label)}\n${marker.impedance_label || "--"}`,
+      });
+    }
+  }
+  drawSmartTags(ctx, smithLabels, { left: cx - r, right: width - (cx + r), top: cy - r, bottom: height - (cy + r) }, width, height);
+  renderSmithMarkers(smith, false);
+}
+
+function renderSmithMarkers(smith, isFullSweep) {
+  elements.smithMarkerRows.innerHTML = "";
+  if (isFullSweep) {
+    elements.smithMarkerRows.innerHTML = `<tr><td colspan="5">全扫宽结果不显示 Smith Chart</td></tr>`;
+    return;
+  }
+  const markers = (smith?.markers || []).filter((marker) =>
+    ["center", "target", "absolute_3db_left", "absolute_3db_right"].includes(marker.type),
+  );
+  if (!markers.length) {
+    elements.smithMarkerRows.innerHTML = `<tr><td colspan="5">暂无 Smith 标记数据</td></tr>`;
+    return;
+  }
+  for (const marker of markers) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${marker.label || marker.type}</td>
+      <td>${marker.frequency_mhz == null ? "--" : Number(marker.frequency_mhz).toFixed(6)}</td>
+      <td>${marker.impedance_label || "--"}</td>
+      <td>${formatS11Rl(marker.s11_db)}</td>
+      <td>${formatVswr(marker.vswr)}</td>
+    `;
+    elements.smithMarkerRows.append(tr);
   }
 }
 
 function renderBandwidths(data) {
   const primary = data?.primary_valley;
   if (primary) {
-    elements.naPrimaryText.textContent = `中心频率 ${primary.frequency_mhz.toFixed(6)} MHz，S11 ${formatDb(primary.s11_db)}，回波损耗 ${formatDb(primary.return_loss_db)}，VSWR ${formatVswr(primary.vswr)}`;
+    elements.naPrimaryText.textContent = `中心频率 ${primary.frequency_mhz.toFixed(6)} MHz，S11/RL ${formatS11Rl(primary.s11_db)}，VSWR ${formatVswr(primary.vswr)}`;
   } else {
     elements.naPrimaryText.textContent = "暂无中心谷值。";
   }
@@ -531,14 +651,14 @@ function renderTargetSummary(summary) {
     ? "--"
     : `${summary.return_loss_delta_db >= 0 ? "+" : ""}${Number(summary.return_loss_delta_db).toFixed(2)} dB`;
   elements.naTargetText.textContent =
-    `理想 ${Number(summary.target_frequency_mhz).toFixed(3)} MHz：S11 ${formatDb(summary.target_s11_db)} / RL ${formatDb(summary.target_return_loss_db)} / VSWR ${formatVswr(summary.target_vswr)}；` +
+    `理想 ${Number(summary.target_frequency_mhz).toFixed(3)} MHz：S11/RL ${formatS11Rl(summary.target_s11_db)} / VSWR ${formatVswr(summary.target_vswr)}；` +
     `实际谷值偏移 ${errorText}，实际谷值相对理想频点回波损耗差 ${rlDelta}，${summary.status_label || "暂无判定"}`;
 }
 
 function renderTargetWindow(points = []) {
   elements.targetRows.innerHTML = "";
   if (!points.length) {
-    elements.targetRows.innerHTML = `<tr><td colspan="5">暂无理想频点附近数据</td></tr>`;
+    elements.targetRows.innerHTML = `<tr><td colspan="4">暂无理想频点附近数据</td></tr>`;
     return;
   }
   for (const point of points) {
@@ -546,8 +666,7 @@ function renderTargetWindow(points = []) {
     tr.innerHTML = `
       <td>${point.offset_percent > 0 ? "+" : ""}${Number(point.offset_percent).toFixed(0)}%</td>
       <td>${Number(point.frequency_mhz).toFixed(6)}</td>
-      <td>${formatDb(point.s11_db)}</td>
-      <td>${formatDb(point.return_loss_db)}</td>
+      <td>${formatS11Rl(point.s11_db)}</td>
       <td>${formatVswr(point.vswr)}</td>
     `;
     elements.targetRows.append(tr);
@@ -557,7 +676,7 @@ function renderTargetWindow(points = []) {
 function renderPoints(points = []) {
   elements.pointRows.innerHTML = "";
   if (!points.length) {
-    elements.pointRows.innerHTML = `<tr><td colspan="5">暂无中心或端点数据</td></tr>`;
+    elements.pointRows.innerHTML = `<tr><td colspan="4">暂无中心或端点数据</td></tr>`;
     return;
   }
   const preferredOrder = {
@@ -578,8 +697,7 @@ function renderPoints(points = []) {
     tr.innerHTML = `
       <td>${point.label || point.type}</td>
       <td>${Number(point.frequency_mhz).toFixed(6)}</td>
-      <td>${formatDb(point.s11_db)}</td>
-      <td>${formatDb(point.return_loss_db)}</td>
+      <td>${formatS11Rl(point.s11_db)}</td>
       <td>${formatVswr(point.vswr)}</td>
     `;
     elements.pointRows.append(tr);
@@ -589,7 +707,7 @@ function renderPoints(points = []) {
 function renderValleys(valleys = []) {
   elements.valleyRows.innerHTML = "";
   if (!valleys.length) {
-    elements.valleyRows.innerHTML = `<tr><td colspan="8">暂无 NA 测量数据</td></tr>`;
+    elements.valleyRows.innerHTML = `<tr><td colspan="7">暂无 NA 测量数据</td></tr>`;
     elements.valleyPageInfo.textContent = "第 0 / 0 页";
     elements.valleyPrevBtn.disabled = true;
     elements.valleyNextBtn.disabled = true;
@@ -606,8 +724,7 @@ function renderValleys(valleys = []) {
     tr.innerHTML = `
       <td>${start + offset + 1}</td>
       <td>${valley.frequency_mhz.toFixed(6)}</td>
-      <td>${formatDb(valley.s11_db)}</td>
-      <td>${formatDb(valley.return_loss_db)}</td>
+      <td>${formatS11Rl(valley.s11_db)}</td>
       <td>${formatVswr(valley.vswr)}</td>
       <td>${(valley.prominence_db || 0).toFixed(3)}</td>
       <td>${abs10?.width_hz == null ? "--" : formatHz(abs10.width_hz)}</td>
@@ -645,6 +762,7 @@ function renderNaStatus(data) {
   elements.naExportBtn.disabled = busy || !data.series;
 
   renderNaS11(data.series, data.primary_valley, data.bandwidths, data.points_of_interest);
+  renderVswr(data.series, data.points_of_interest);
   renderSmith(data.smith, data.is_full_sweep);
   renderBandwidths(data);
   renderTargetSummary(data.target_summary);
@@ -844,6 +962,7 @@ function bindEvents() {
   window.addEventListener("resize", () => {
     renderChart(state.result?.series, state.result?.peaks || []);
     renderNaS11(state.naResult?.series, state.naResult?.primary_valley, state.naResult?.bandwidths, state.naResult?.points_of_interest);
+    renderVswr(state.naResult?.series, state.naResult?.points_of_interest);
     renderSmith(state.naResult?.smith, state.naResult?.is_full_sweep);
   });
 }
@@ -930,6 +1049,207 @@ function drawVertical(ctx, x, top, bottom, color, dash = []) {
   ctx.restore();
 }
 
+function drawSmartTags(ctx, items, pad, width, height) {
+  if (!items?.length) return;
+  const bounds = {
+    left: Math.max(4, pad.left || 0),
+    right: Math.min(width - 4, width - (pad.right || 0)),
+    top: Math.max(4, pad.top || 0),
+    bottom: Math.min(height - 4, height - (pad.bottom || 0)),
+  };
+  const occupied = [];
+  ctx.save();
+  ctx.font = "12px Bahnschrift, sans-serif";
+  const sorted = [...items].sort((a, b) => markerRank(a.type) - markerRank(b.type));
+  for (const item of sorted) {
+    const lines = String(item.text || "").split("\n").filter(Boolean);
+    if (!lines.length) continue;
+    const metrics = tagMetrics(ctx, lines);
+    let chosen = null;
+    for (const offset of tagOffsets(item.type)) {
+      const rect = tagRect(item.anchorX, item.anchorY, offset, metrics);
+      if (!rectInside(rect, bounds)) continue;
+      if (occupied.some((prev) => rectOverlap(rect, prev, 4))) continue;
+      chosen = { offset, rect };
+      break;
+    }
+    if (!chosen) {
+      const offset = tagOffsets(item.type)[0];
+      const rect = clampRect(tagRect(item.anchorX, item.anchorY, offset, metrics), bounds);
+      chosen = { offset: { dx: rect.left - item.anchorX, dy: rect.top - item.anchorY }, rect };
+    }
+    occupied.push(chosen.rect);
+    ctx.strokeStyle = item.color || "#60717a";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(item.anchorX, item.anchorY);
+    ctx.lineTo(chosen.rect.left + (chosen.rect.right - chosen.rect.left) / 2, chosen.rect.top + (chosen.rect.bottom - chosen.rect.top) / 2);
+    ctx.stroke();
+    drawTagBox(ctx, lines, chosen.rect, item.color || "#60717a");
+  }
+  ctx.restore();
+}
+
+function tagMetrics(ctx, lines) {
+  const width = Math.max(...lines.map((line) => ctx.measureText(line).width)) + 16;
+  const lineHeight = 14;
+  return { width, height: lineHeight * lines.length + 10, lineHeight };
+}
+
+function tagRect(anchorX, anchorY, offset, metrics) {
+  const left = offset.dx >= 0 ? anchorX + offset.dx : anchorX + offset.dx - metrics.width;
+  const top = offset.dy >= 0 ? anchorY + offset.dy : anchorY + offset.dy - metrics.height;
+  return { left, top, right: left + metrics.width, bottom: top + metrics.height, metrics };
+}
+
+function clampRect(rect, bounds) {
+  const width = rect.right - rect.left;
+  const height = rect.bottom - rect.top;
+  const left = clamp(rect.left, bounds.left, Math.max(bounds.left, bounds.right - width));
+  const top = clamp(rect.top, bounds.top, Math.max(bounds.top, bounds.bottom - height));
+  return { ...rect, left, top, right: left + width, bottom: top + height };
+}
+
+function rectInside(rect, bounds) {
+  return rect.left >= bounds.left && rect.right <= bounds.right && rect.top >= bounds.top && rect.bottom <= bounds.bottom;
+}
+
+function rectOverlap(a, b, padding = 0) {
+  return !(a.right + padding < b.left || b.right + padding < a.left || a.bottom + padding < b.top || b.bottom + padding < a.top);
+}
+
+function drawTagBox(ctx, lines, rect, color) {
+  ctx.save();
+  ctx.fillStyle = "rgba(255, 248, 232, 0.94)";
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  roundRect(ctx, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, 9);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.font = "12px Bahnschrift, sans-serif";
+  lines.forEach((line, index) => {
+    ctx.fillText(line, rect.left + 8, rect.top + 16 + index * 14);
+  });
+  ctx.restore();
+}
+
+function tagOffsets(type) {
+  const left = [{ dx: -12, dy: -10 }, { dx: -12, dy: 16 }, { dx: -74, dy: -18 }, { dx: 14, dy: 16 }];
+  const right = [{ dx: 12, dy: -10 }, { dx: 12, dy: 16 }, { dx: 74, dy: -18 }, { dx: -14, dy: 16 }];
+  if (type?.endsWith("_left")) return left;
+  if (type?.endsWith("_right")) return right;
+  if (type === "target") return [{ dx: -12, dy: 16 }, { dx: -12, dy: -34 }, { dx: 12, dy: 16 }, { dx: 12, dy: -34 }];
+  return [{ dx: 12, dy: 16 }, { dx: 12, dy: -34 }, { dx: -12, dy: 16 }, { dx: -12, dy: -34 }];
+}
+
+function markerRank(type) {
+  return {
+    center: 0,
+    target: 1,
+    absolute_3db_left: 2,
+    absolute_3db_right: 3,
+    absolute_10db_left: 4,
+    absolute_10db_right: 5,
+  }[type] ?? 99;
+}
+
+function markerLabel(point, mode) {
+  const short = markerShortLabel(point.type, point.label);
+  const freq = point.frequency_mhz == null ? "--" : `${Number(point.frequency_mhz).toFixed(3)}MHz`;
+  if (mode === "vswr") return `${short}\n${freq} · VSWR ${formatVswr(point.vswr)}`;
+  return `${short}\n${freq} · ${Number(point.s11_db).toFixed(1)}dB`;
+}
+
+function markerShortLabel(type, fallback) {
+  return {
+    center: "中心",
+    target: "理想",
+    absolute_3db_left: "-3L",
+    absolute_3db_right: "-3R",
+    absolute_10db_left: "-10L",
+    absolute_10db_right: "-10R",
+  }[type] || fallback || type || "";
+}
+
+function drawSmithGrid(ctx, cx, cy, radius, referenceOhm = 50) {
+  ctx.save();
+  ctx.strokeStyle = "rgba(31, 57, 63, 0.34)";
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(31, 57, 63, 0.26)";
+  ctx.lineWidth = 0.9;
+  ctx.beginPath();
+  ctx.moveTo(cx - radius, cy);
+  ctx.lineTo(cx + radius, cy);
+  ctx.moveTo(cx, cy - radius);
+  ctx.lineTo(cx, cy + radius);
+  ctx.stroke();
+
+  const resistanceValues = [0, 0.2, 0.5, 1, 2, 5];
+  const reactanceValues = [0.2, 0.5, 1, 2, 5];
+  const xSweep = Array.from({ length: 361 }, (_, index) => -10 + (20 * index) / 360);
+  const rSweep = Array.from({ length: 321 }, (_, index) => (20 * index) / 320);
+
+  ctx.strokeStyle = "rgba(96, 113, 122, 0.26)";
+  ctx.fillStyle = "rgba(69, 90, 100, 0.84)";
+  ctx.font = "10px Cascadia Code, monospace";
+  for (const resistance of resistanceValues) {
+    drawSmithCurve(ctx, xSweep.map((reactance) => gammaFromNormalizedImpedance(resistance, reactance)), cx, cy, radius);
+    const labelPoint = gammaFromNormalizedImpedance(resistance, 0);
+    if (labelPoint) {
+      const label = resistance === 0 ? "短路" : `${formatOhm(resistance * referenceOhm)}`;
+      ctx.fillText(label, cx + labelPoint.real * radius - 14, cy + 14);
+    }
+  }
+
+  ctx.strokeStyle = "rgba(96, 113, 122, 0.22)";
+  for (const reactance of reactanceValues) {
+    for (const sign of [1, -1]) {
+      const value = reactance * sign;
+      drawSmithCurve(ctx, rSweep.map((resistance) => gammaFromNormalizedImpedance(resistance, value)), cx, cy, radius);
+      const labelPoint = gammaFromNormalizedImpedance(0.24, value);
+      if (labelPoint) {
+        const label = `${sign > 0 ? "+" : "-"}j${formatOhm(reactance * referenceOhm)}`;
+        ctx.fillText(label, cx + labelPoint.real * radius + 4, cy - labelPoint.imag * radius + (sign > 0 ? -3 : 11));
+      }
+    }
+  }
+
+  ctx.fillStyle = "#455a64";
+  ctx.fillText(`Z0=${formatOhm(referenceOhm)}`, cx - radius + 8, cy + radius - 8);
+  ctx.restore();
+}
+
+function drawSmithCurve(ctx, points, cx, cy, radius) {
+  const valid = points.filter((point) => point && Math.hypot(point.real, point.imag) <= 1.0001);
+  if (valid.length < 2) return;
+  ctx.beginPath();
+  valid.forEach((point, index) => {
+    const px = cx + point.real * radius;
+    const py = cy - point.imag * radius;
+    if (index === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  });
+  ctx.stroke();
+}
+
+function gammaFromNormalizedImpedance(resistance, reactance) {
+  const denominatorReal = resistance + 1;
+  const denominatorImag = reactance;
+  const denominator = denominatorReal ** 2 + denominatorImag ** 2;
+  if (denominator <= 1e-12) return null;
+  const numeratorReal = resistance - 1;
+  const numeratorImag = reactance;
+  return {
+    real: (numeratorReal * denominatorReal + numeratorImag * denominatorImag) / denominator,
+    imag: (numeratorImag * denominatorReal - numeratorReal * denominatorImag) / denominator,
+  };
+}
+
 function drawTag(ctx, text, x, y, color) {
   ctx.save();
   ctx.font = "12px Bahnschrift, sans-serif";
@@ -988,9 +1308,33 @@ function formatDb(value) {
   return `${Number(value).toFixed(3)} dB`;
 }
 
+function formatS11Rl(value) {
+  if (value == null || Number.isNaN(Number(value))) return "--";
+  const s11 = Number(value);
+  return `${s11.toFixed(3)} / ${(-s11).toFixed(3)} dB`;
+}
+
 function formatVswr(value) {
   if (value == null || Number.isNaN(Number(value))) return "∞";
   return Number(value).toFixed(3);
+}
+
+function vswrFromS11Db(s11Db) {
+  const gamma = 10 ** (Number(s11Db) / 20);
+  if (gamma >= 0.999999) return Infinity;
+  return (1 + gamma) / (1 - gamma);
+}
+
+function vswrPlotCap(values) {
+  const finite = values.filter((value) => Number.isFinite(Number(value))).map(Number);
+  if (!finite.length) return 6;
+  return Math.max(2.2, Math.min(10, Math.max(...finite) + 0.4, vswrFromS11Db(-3) + 0.25));
+}
+
+function formatOhm(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "--";
+  return `${number >= 100 ? number.toFixed(0) : number.toFixed(1)}Ω`;
 }
 
 async function init() {

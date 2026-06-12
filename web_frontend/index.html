@@ -252,6 +252,21 @@
           </div>
         </section>
 
+        <section class="panel na-vswr-panel">
+          <div class="panel-title">
+            <span>VSWR</span>
+            <h2>VSWR 驻波比曲线</h2>
+            <button class="help-button" type="button" aria-label="VSWR 曲线说明" data-help="VSWR 由 S11 对应的反射系数计算，越接近 1 表示匹配越好。图中同步标记理想频点、实际谷值，以及对应 S11=-10dB/-3dB 的 VSWR 参考线。">?</button>
+          </div>
+          <canvas id="naVswrCanvas" width="1200" height="460"></canvas>
+          <div class="legend">
+            <span><i class="line measured green"></i>VSWR</span>
+            <span><i class="line threshold10"></i>S11=-10dB</span>
+            <span><i class="line threshold3"></i>S11=-3dB</span>
+            <span><i class="dot"></i>关键频点</span>
+          </div>
+        </section>
+
         <section class="panel na-bandwidth-panel">
           <div class="panel-title">
             <span>BW</span>
@@ -275,13 +290,12 @@
                 <tr>
                   <th>标记</th>
                   <th>频率 MHz</th>
-                  <th>S11 dB</th>
-                  <th>回波损耗 dB</th>
+                  <th>S11 / 回波损耗 dB</th>
                   <th>VSWR</th>
                 </tr>
               </thead>
               <tbody id="pointRows">
-                <tr><td colspan="5">暂无中心或端点数据</td></tr>
+                <tr><td colspan="4">暂无中心或端点数据</td></tr>
               </tbody>
             </table>
           </div>
@@ -293,13 +307,12 @@
                   <tr>
                     <th>偏移</th>
                     <th>频率 MHz</th>
-                    <th>S11 dB</th>
-                    <th>回波损耗 dB</th>
+                    <th>S11 / 回波损耗 dB</th>
                     <th>VSWR</th>
                   </tr>
                 </thead>
                 <tbody id="targetRows">
-                  <tr><td colspan="5">暂无理想频点附近数据</td></tr>
+                  <tr><td colspan="4">暂无理想频点附近数据</td></tr>
                 </tbody>
               </table>
             </div>
@@ -309,10 +322,26 @@
         <section class="panel na-smith-panel">
           <div class="panel-title">
             <span>Smith</span>
-            <h2>Smith Chart</h2>
-            <button class="help-button" type="button" aria-label="Smith Chart 说明" data-help="普通预设显示复数 Gamma 轨迹，并标记中心频率、绝对 -3/-10dB 端点和相对 +3/+10dB 端点。全扫宽点数和跨度过大，默认不显示 Smith Chart。">?</button>
+            <h2>Smith Chart 与阻抗</h2>
+            <button class="help-button" type="button" aria-label="Smith Chart 说明" data-help="普通预设显示复数 Gamma 轨迹，并按 50Ω 归一化阻抗网格标注阻抗。手册支持把仪器当前屏幕保存为 PNG，但这里使用 SDATA? 自绘，便于稳定标记中心、理想频点和 -3dB 端点。">?</button>
           </div>
           <canvas id="smithCanvas" width="760" height="520"></canvas>
+          <div class="table-wrap compact-table smith-marker-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>标记</th>
+                  <th>频率 MHz</th>
+                  <th>阻抗 Ω</th>
+                  <th>S11 / 回波损耗 dB</th>
+                  <th>VSWR</th>
+                </tr>
+              </thead>
+              <tbody id="smithMarkerRows">
+                <tr><td colspan="5">暂无 Smith 标记数据</td></tr>
+              </tbody>
+            </table>
+          </div>
         </section>
 
         <section class="panel na-valley-panel">
@@ -327,8 +356,7 @@
                 <tr>
                   <th>#</th>
                   <th>频率 MHz</th>
-                  <th>S11 dB</th>
-                  <th>回波损耗 dB</th>
+                  <th>S11 / 回波损耗 dB</th>
                   <th>VSWR</th>
                   <th>显著性 dB</th>
                   <th>绝对 -10dB 带宽</th>
@@ -336,7 +364,7 @@
                 </tr>
               </thead>
               <tbody id="valleyRows">
-                <tr><td colspan="8">暂无 NA 测量数据</td></tr>
+                <tr><td colspan="7">暂无 NA 测量数据</td></tr>
               </tbody>
             </table>
           </div>

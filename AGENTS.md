@@ -58,6 +58,7 @@
 - NA 校准固定顺序按 FieldFox QuickCal 文档执行，且 NA 使用 switchbox 的 B/C 通道：OPEN=`B2C1` + `CORR:COLL:INT 1;*OPC?` 必须先于 LOAD=`B1C1` + `CORR:COLL:LOAD 1;*OPC?`，最后 ANTENNA=`B2C2`；否则仪器可能返回 `Must acquire open port first`。SA 仍使用原有 A/D 自动切换逻辑。
 - NA 默认天线预设包含 433/868/915/2450/5GHz/全扫宽；结果必须保留负值 S11 dB，同时同步计算回波损耗 `RL=-S11_dB` 和由 `|Γ|=10^(S11/20)` 得到的 VSWR，前端和 PDF 报告都要展示。
 - NA 普通预设要区分“理想频点”和“实际中心谷值”：Web 和 PDF 都要展示理想频点附近损耗、实际-理想频偏和回波损耗差；报告页保持 A4 纵向版式，避免使用会改变页面尺寸的 tight bbox。
+- NA Smith Chart 使用 `SDATA?` 返回的复数 Gamma 自绘，并按 `Z0=50Ω` 显示阻抗网格和中心/理想/-3dB 标记阻抗；不要只画普通同心圆。若改为仪器截图，需明确会通过 `CALC:FORM SMITh`/`MMEM:STORe:IMAGe` 改变显示状态并验证恢复。
 - SCPI 调试先做只读查询或短流程复现，例如 `*IDN?`、资源枚举、当前配置查询；避免直接上来改模式或触发扫描。
 - 对超时、断连、VISA IO 错误、DLL 加载失败、RF Switch 未连接等情况，要保留清晰错误提示和降级路径。
 

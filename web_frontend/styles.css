@@ -773,6 +773,7 @@ th {
   grid-template-areas:
     "naflow nastatus nabw"
     "naflow nas11 nas11"
+    "naflow navswr navswr"
     "napoints napoints napoints"
     "nasmith navalley navalley"
     "log log log";
@@ -781,6 +782,7 @@ th {
 .na-flow-panel { grid-area: naflow; }
 .na-status-panel { grid-area: nastatus; }
 .na-s11-panel { grid-area: nas11; }
+.na-vswr-panel { grid-area: navswr; }
 .na-bandwidth-panel { grid-area: nabw; }
 .na-point-panel { grid-area: napoints; }
 .na-smith-panel { grid-area: nasmith; }
@@ -791,6 +793,7 @@ th {
 }
 
 #naS11Canvas,
+#naVswrCanvas,
 #smithCanvas {
   width: 100%;
   height: min(52vh, 520px);
@@ -806,6 +809,7 @@ th {
   min-height: 430px;
 }
 
+.line.measured.green { background: var(--green); }
 .line.threshold3 { background: var(--amber); }
 .line.threshold10 { background: var(--red); }
 
@@ -857,6 +861,10 @@ th {
   max-height: 260px;
 }
 
+.smith-marker-table {
+  margin-top: 14px;
+}
+
 .bandwidth-grid {
   display: grid;
   gap: 12px;
@@ -905,6 +913,7 @@ th {
     grid-template-areas:
       "naflow nastatus"
       "nas11 nas11"
+      "navswr navswr"
       "napoints napoints"
       "nabw nasmith"
       "navalley navalley";
@@ -922,6 +931,7 @@ th {
       "naflow"
       "nastatus"
       "nas11"
+      "navswr"
       "nabw"
       "napoints"
       "nasmith"

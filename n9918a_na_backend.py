@@ -102,6 +102,8 @@ SWITCH_POSITIONS = {
     "ANTENNA": {"B": 2, "C": 2},
 }
 
+REFERENCE_IMPEDANCE_OHM = 50.0
+
 
 @dataclass
 class CalibrationEvent:
@@ -435,6 +437,26 @@ def vswr_from_s11_db(s11_db):
     return round((1.0 + gamma) / (1.0 - gamma), 4)
 
 
+def impedance_from_gamma(real, imag, reference_ohm=REFERENCE_IMPEDANCE_OHM):
+    if real is None or imag is None:
+        return None
+    gamma = complex(float(real), float(imag))
+    denominator = 1 - gamma
+    if abs(denominator) < 1e-12:
+        return None
+    impedance = float(reference_ohm) * (1 + gamma) / denominator
+    if not math.isfinite(impedance.real) or not math.isfinite(impedance.imag):
+        return None
+    magnitude = abs(impedance)
+    return {
+        "reference_ohm": float(reference_ohm),
+        "resistance_ohm": round(impedance.real, 4),
+        "reactance_ohm": round(impedance.imag, 4),
+        "impedance_magnitude_ohm": round(magnitude, 4),
+        "impedance_label": format_impedance(impedance.real, impedance.imag),
+    }
+
+
 def metric_point(label, frequency_hz, s11_db, point_type=None):
     if frequency_hz is None or s11_db is None:
         return None
@@ -570,24 +592,44 @@ def bandwidth_for_valley(frequencies, s11_db, valley):
     return calculate_all_bandwidths(frequencies, s11_db, valley)
 
 
-def build_smith_payload(frequencies, real, imag, s11_db, primary_valley_with_index, bandwidths, full_sweep=False):
+def build_smith_payload(
+    frequencies,
+    real,
+    imag,
+    s11_db,
+    primary_valley_with_index,
+    bandwidths,
+    full_sweep=False,
+    target_summary=None,
+):
     if full_sweep:
         return None
     markers = []
     if primary_valley_with_index:
         idx = primary_valley_with_index["index"]
+        markers.append(_smith_marker_payload(
+            "center",
+            "中心谷值",
+            frequencies[idx],
+            s11_db[idx],
+            real[idx],
+            imag[idx],
+        ))
+
+    if target_summary:
+        target_hz = target_summary.get("target_frequency_hz")
+        target_s11 = target_summary.get("target_s11_db")
+        target_real = interpolate_series(frequencies, real, target_hz)
+        target_imag = interpolate_series(frequencies, imag, target_hz)
         markers.append(
-            {
-                "type": "center",
-                "label": "中心谷值",
-                "frequency_hz": frequencies[idx],
-                "frequency_mhz": frequencies[idx] / 1e6,
-                "s11_db": s11_db[idx],
-                "return_loss_db": return_loss_from_s11_db(s11_db[idx]),
-                "vswr": vswr_from_s11_db(s11_db[idx]),
-                "real": real[idx],
-                "imag": imag[idx],
-            }
+            _smith_marker_payload(
+                "target",
+                "理想频点",
+                target_hz,
+                target_s11,
+                target_real,
+                target_imag,
+            )
         )
 
     marker_labels = {
@@ -602,24 +644,42 @@ def build_smith_payload(frequencies, real, imag, s11_db, primary_valley_with_ind
             if target is None:
                 continue
             markers.append(
-                {
-                    "type": f"{key}_{side}",
-                    "label": f"{marker_labels.get(key, key)} {'左端点' if side == 'left' else '右端点'}",
-                    "frequency_hz": target,
-                    "frequency_mhz": target / 1e6,
-                    "s11_db": bw.get(f"{side}_s11_db"),
-                    "return_loss_db": bw.get(f"{side}_return_loss_db"),
-                    "vswr": bw.get(f"{side}_vswr"),
-                    "real": interpolate_series(frequencies, real, target),
-                    "imag": interpolate_series(frequencies, imag, target),
-                }
+                _smith_marker_payload(
+                    f"{key}_{side}",
+                    f"{marker_labels.get(key, key)} {'左端点' if side == 'left' else '右端点'}",
+                    target,
+                    bw.get(f"{side}_s11_db"),
+                    interpolate_series(frequencies, real, target),
+                    interpolate_series(frequencies, imag, target),
+                    return_loss_db=bw.get(f"{side}_return_loss_db"),
+                    vswr=bw.get(f"{side}_vswr"),
+                )
             )
 
     return {
+        "reference_ohm": REFERENCE_IMPEDANCE_OHM,
         "real": [round(v, 8) for v in real],
         "imag": [round(v, 8) for v in imag],
         "markers": markers,
     }
+
+
+def _smith_marker_payload(marker_type, label, frequency_hz, s11_db, real, imag, return_loss_db=None, vswr=None):
+    marker = {
+        "type": marker_type,
+        "label": label,
+        "frequency_hz": frequency_hz,
+        "frequency_mhz": frequency_hz / 1e6 if frequency_hz is not None else None,
+        "s11_db": s11_db,
+        "return_loss_db": return_loss_db if return_loss_db is not None else return_loss_from_s11_db(s11_db),
+        "vswr": vswr if vswr is not None else vswr_from_s11_db(s11_db),
+        "real": real,
+        "imag": imag,
+    }
+    impedance = impedance_from_gamma(real, imag)
+    if impedance:
+        marker.update(impedance)
+    return marker
 
 
 def build_points_of_interest(frequencies, s11_db, primary_valley_with_index, bandwidths):
@@ -785,7 +845,16 @@ def build_na_result(frequencies, s11_db, real=None, imag=None, config=None, pres
         item["bandwidths"] = bw
         valleys_payload.append(item)
 
-    smith = build_smith_payload(frequencies, real, imag, s11_db, primary_with_index, bandwidths, full_sweep=full_sweep)
+    smith = build_smith_payload(
+        frequencies,
+        real,
+        imag,
+        s11_db,
+        primary_with_index,
+        bandwidths,
+        full_sweep=full_sweep,
+        target_summary=target_summary,
+    )
     return {
         "config": config or {},
         "preset_key": preset_key,
@@ -883,6 +952,10 @@ def export_na_report(result, user_info=None, output_dir="reports"):
         pdf.savefig(fig)
         plt.close(fig)
 
+        fig = _build_na_vswr_page(plt, result, logo_path, font)
+        pdf.savefig(fig)
+        plt.close(fig)
+
         fig = _build_na_smith_page(plt, result, logo_path, font)
         pdf.savefig(fig)
         plt.close(fig)
@@ -942,30 +1015,27 @@ def _build_na_summary_page(plt, result, user_info, logo_path, font):
     _draw_report_table(ax, info_rows, [0.06, 0.69, 0.88, 0.17], font, font_size=8.8)
 
     metric_rows = [
-        ["项目", "频率", "S11", "回波损耗", "VSWR"],
+        ["项目", "频率", "S11 / RL", "VSWR"],
         [
             "理想频点",
             _format_mhz(target.get("target_frequency_mhz")),
-            _format_db(target.get("target_s11_db")),
-            _format_db(target.get("target_return_loss_db")),
+            _format_s11_rl(target.get("target_s11_db")),
             _format_vswr(target.get("target_vswr")),
         ],
         [
             "实际谷值",
             _format_mhz(primary.get("frequency_mhz")),
-            _format_db(primary.get("s11_db")),
-            _format_db(primary.get("return_loss_db")),
+            _format_s11_rl(primary.get("s11_db")),
             _format_vswr(primary.get("vswr")),
         ],
         [
             "实际-理想",
             _format_mhz_delta(target.get("frequency_error_mhz")),
-            _format_db(target.get("s11_delta_db")),
-            _format_db(target.get("return_loss_delta_db")),
+            _format_s11_rl(target.get("s11_delta_db")),
             "--",
         ],
     ]
-    _draw_report_table(ax, metric_rows, [0.06, 0.57, 0.88, 0.10], font, font_size=8.0, header=True)
+    _draw_report_table(ax, metric_rows, [0.06, 0.57, 0.88, 0.10], font, font_size=7.8, header=True)
     comparison_note = _format_target_comparison_note(target)
     ax.text(0.06, 0.535, comparison_note, transform=ax.transAxes, fontsize=8.0, fontproperties=font, color="#455a64")
 
@@ -983,17 +1053,16 @@ def _build_na_summary_page(plt, result, user_info, logo_path, font):
         )
     _draw_report_table(ax, bandwidth_rows, [0.06, 0.285, 0.88, 0.235], font, font_size=6.8, header=True)
 
-    target_rows = [["偏移", "频率", "S11", "回波损耗", "VSWR"]]
+    target_rows = [["偏移", "频率", "S11 / RL", "VSWR"]]
     target_window = result.get("target_window") or []
     if not target_window:
-        target_rows.append(["--", "无理想频点", "--", "--", "--"])
+        target_rows.append(["--", "无理想频点", "--", "--"])
     for point in target_window:
         target_rows.append(
             [
                 _format_percent(point.get("offset_percent")),
                 _format_mhz(point.get("frequency_mhz")),
-                _format_db(point.get("s11_db")),
-                _format_db(point.get("return_loss_db")),
+                _format_s11_rl(point.get("s11_db")),
                 _format_vswr(point.get("vswr")),
             ]
         )
@@ -1005,7 +1074,7 @@ def _build_na_summary_page(plt, result, user_info, logo_path, font):
 
 def _build_na_s11_page(plt, result, logo_path, font):
     fig, ax_title = _new_report_figure(plt, "S11 曲线与端点标记", logo_path, font)
-    ax = fig.add_axes([0.10, 0.40, 0.82, 0.42])
+    ax = fig.add_axes([0.09, 0.46, 0.84, 0.40])
     series = result.get("series") or {}
     x_vals = series.get("frequency_mhz") or []
     y_vals = series.get("s11_db") or []
@@ -1028,7 +1097,8 @@ def _build_na_s11_page(plt, result, logo_path, font):
         "absolute_10db_left": "#b7442e",
         "absolute_10db_right": "#b7442e",
     }
-    marker_rows = [["标记", "频率", "S11", "RL", "VSWR"]]
+    marker_rows = [["标记", "频率", "S11 / RL", "VSWR"]]
+    label_points = []
     for point in result.get("points_of_interest", []):
         point_type = point.get("type")
         if point_type not in colors:
@@ -1036,12 +1106,21 @@ def _build_na_s11_page(plt, result, logo_path, font):
         if point_type in {"center", "target"}:
             ax.axvline(point.get("frequency_mhz"), color=colors[point_type], linestyle=":", linewidth=1.1)
         ax.scatter(point.get("frequency_mhz"), point.get("s11_db"), s=38, color=colors[point_type], zorder=5)
+        if point_type in {"center", "target", "absolute_3db_left", "absolute_3db_right", "absolute_10db_left", "absolute_10db_right"}:
+            label_points.append(
+                {
+                    "x": point.get("frequency_mhz"),
+                    "y": point.get("s11_db"),
+                    "type": point_type,
+                    "color": colors[point_type],
+                    "text": _report_marker_label(point, value_key="s11"),
+                }
+            )
         marker_rows.append(
             [
                 point.get("label", ""),
                 _format_mhz(point.get("frequency_mhz")),
-                _format_db(point.get("s11_db")),
-                _format_db(point.get("return_loss_db")),
+                _format_s11_rl(point.get("s11_db")),
                 _format_vswr(point.get("vswr")),
             ]
         )
@@ -1050,41 +1129,123 @@ def _build_na_s11_page(plt, result, logo_path, font):
     ax.set_ylabel("S11 (dB)", fontproperties=font)
     ax.grid(True, alpha=0.25)
     ax.legend(prop=font, loc="best")
-    _draw_report_table(ax_title, marker_rows[:10], [0.07, 0.105, 0.86, 0.22], font, font_size=7.0, header=True)
-    ax_title.text(0.07, 0.355, "曲线标记实际中心谷值、理想频点、绝对 -3dB 端点和绝对 -10dB 端点；详细端点信息见表格。", transform=ax_title.transAxes, fontsize=8.4, fontproperties=font, color="#60717a")
+    _annotate_report_points(ax, label_points, font)
+    ax_title.text(0.07, 0.405, "图内直接标注中心谷值、理想频点和绝对 -3/-10dB 端点；S11/RL 合并显示，避免重复列占用空间。", transform=ax_title.transAxes, fontsize=8.4, fontproperties=font, color="#60717a")
+    _draw_report_table(ax_title, marker_rows[:8], [0.07, 0.135, 0.86, 0.22], font, font_size=7.0, header=True)
+    return fig
+
+
+def _build_na_vswr_page(plt, result, logo_path, font):
+    fig, ax_title = _new_report_figure(plt, "VSWR 驻波比曲线", logo_path, font)
+    ax = fig.add_axes([0.09, 0.46, 0.84, 0.40])
+    series = result.get("series") or {}
+    x_vals = series.get("frequency_mhz") or []
+    y_vals = series.get("vswr") or []
+    plot_pairs = [(x, y) for x, y in zip(x_vals, y_vals) if y is not None and math.isfinite(float(y))]
+    if not plot_pairs:
+        ax.text(0.5, 0.5, "暂无 VSWR 数据", transform=ax.transAxes, ha="center", va="center", fontproperties=font)
+        return fig
+
+    plot_x, plot_y = zip(*plot_pairs)
+    y_cap = _vswr_plot_cap(plot_y)
+    clipped_y = [min(float(value), y_cap) for value in plot_y]
+    if max(plot_x) / max(min(v for v in plot_x if v > 0), 0.001) > 4:
+        ax.semilogx(plot_x, clipped_y, color="#23744a", linewidth=1.5, label="VSWR")
+    else:
+        ax.plot(plot_x, clipped_y, color="#23744a", linewidth=1.5, label="VSWR")
+
+    threshold_rows = [
+        ("S11=-10dB", vswr_from_s11_db(-10), "#b7442e"),
+        ("S11=-3dB", vswr_from_s11_db(-3), "#d9822b"),
+    ]
+    for label, threshold, color in threshold_rows:
+        if threshold and threshold <= y_cap:
+            ax.axhline(threshold, color=color, linestyle="--", linewidth=1, label=f"{label} / VSWR {threshold:.3f}")
+
+    colors = {
+        "center": "#b7442e",
+        "target": "#23744a",
+        "absolute_3db_left": "#d9822b",
+        "absolute_3db_right": "#d9822b",
+        "absolute_10db_left": "#b7442e",
+        "absolute_10db_right": "#b7442e",
+    }
+    marker_rows = [["标记", "频率", "VSWR", "S11 / RL"]]
+    label_points = []
+    for point in result.get("points_of_interest", []):
+        point_type = point.get("type")
+        vswr = point.get("vswr")
+        if point_type not in colors or vswr is None:
+            continue
+        if point_type in {"center", "target"}:
+            ax.axvline(point.get("frequency_mhz"), color=colors[point_type], linestyle=":", linewidth=1.1)
+        ax.scatter(point.get("frequency_mhz"), min(float(vswr), y_cap), s=38, color=colors[point_type], zorder=5)
+        if point_type in {"center", "target", "absolute_3db_left", "absolute_3db_right", "absolute_10db_left", "absolute_10db_right"}:
+            label_points.append(
+                {
+                    "x": point.get("frequency_mhz"),
+                    "y": min(float(vswr), y_cap),
+                    "type": point_type,
+                    "color": colors[point_type],
+                    "text": _report_marker_label(point, value_key="vswr"),
+                }
+            )
+        marker_rows.append(
+            [
+                point.get("label", ""),
+                _format_mhz(point.get("frequency_mhz")),
+                _format_vswr(vswr),
+                _format_s11_rl(point.get("s11_db")),
+            ]
+        )
+
+    ax.set_ylim(1.0, max(1.2, y_cap))
+    ax.set_xlabel("Frequency (MHz)", fontproperties=font)
+    ax.set_ylabel("VSWR", fontproperties=font)
+    ax.grid(True, alpha=0.25)
+    ax.legend(prop=font, loc="best")
+    _annotate_report_points(ax, label_points, font)
+    ax_title.text(0.07, 0.405, "VSWR 越接近 1 越好；图中标注关键频点，超过绘图上限的点压到上边界，避免曲线不可读。", transform=ax_title.transAxes, fontsize=8.4, fontproperties=font, color="#60717a")
+    _draw_report_table(ax_title, marker_rows[:8], [0.07, 0.135, 0.86, 0.22], font, font_size=7.0, header=True)
     return fig
 
 
 def _build_na_smith_page(plt, result, logo_path, font):
-    fig, ax_title = _new_report_figure(plt, "Smith Chart 标记", logo_path, font)
-    ax = fig.add_axes([0.16, 0.42, 0.68, 0.38])
+    fig, ax_title = _new_report_figure(plt, "Smith Chart 与阻抗标记", logo_path, font)
+    ax = fig.add_axes([0.14, 0.45, 0.72, 0.40])
     smith = result.get("smith")
     if not smith:
         ax.axis("off")
         ax.text(0.5, 0.5, "全扫宽结果不显示 Smith Chart", transform=ax.transAxes, ha="center", va="center", fontproperties=font)
         return fig
 
-    circle = plt.Circle((0, 0), 1, color="#1f393f", fill=False, linewidth=1)
-    ax.add_artist(circle)
-    for radius in (0.25, 0.5, 0.75):
-        ax.add_artist(plt.Circle((0, 0), radius, color="#1f393f", fill=False, alpha=0.18, linewidth=0.8))
-    ax.axhline(0, color="#1f393f", linewidth=0.8, alpha=0.35)
-    ax.axvline(0, color="#1f393f", linewidth=0.8, alpha=0.35)
+    reference_ohm = smith.get("reference_ohm") or REFERENCE_IMPEDANCE_OHM
+    _draw_smith_impedance_grid(ax, reference_ohm, font)
     ax.plot(smith.get("real", []), smith.get("imag", []), color="#0a6a72", linewidth=1.4)
 
-    marker_rows = [["标记", "频率", "S11", "RL", "VSWR"]]
+    marker_rows = [["标记", "频率", "阻抗", "S11 / RL", "VSWR"]]
+    label_points = []
     for marker in smith.get("markers", []):
         marker_type = marker.get("type")
-        if marker_type not in {"center", "absolute_3db_left", "absolute_3db_right"}:
+        if marker_type not in {"center", "target", "absolute_3db_left", "absolute_3db_right"}:
             continue
-        color = "#b7442e" if marker_type == "center" else "#d9822b"
+        color = "#b7442e" if marker_type == "center" else "#23744a" if marker_type == "target" else "#d9822b"
         ax.scatter(marker.get("real"), marker.get("imag"), s=46, color=color, zorder=5)
+        label_points.append(
+            {
+                "x": marker.get("real"),
+                "y": marker.get("imag"),
+                "type": marker_type,
+                "color": color,
+                "text": _report_smith_label(marker),
+            }
+        )
         marker_rows.append(
             [
                 marker.get("label", ""),
                 _format_mhz(marker.get("frequency_mhz")),
-                _format_db(marker.get("s11_db")),
-                _format_db(marker.get("return_loss_db")),
+                marker.get("impedance_label") or "--",
+                _format_s11_rl(marker.get("s11_db")),
                 _format_vswr(marker.get("vswr")),
             ]
         )
@@ -1095,8 +1256,9 @@ def _build_na_smith_page(plt, result, logo_path, font):
     ax.set_xlabel("Real(Γ)", fontproperties=font)
     ax.set_ylabel("Imag(Γ)", fontproperties=font)
     ax.grid(True, alpha=0.18)
-    _draw_report_table(ax_title, marker_rows, [0.08, 0.13, 0.84, 0.22], font, font_size=7.2, header=True)
-    ax_title.text(0.08, 0.36, "Smith Chart 按需求标记中心频率和绝对 -3dB 左右端点；标记名称统一放在表格中，避免图内文字重叠。", transform=ax_title.transAxes, fontsize=8.4, fontproperties=font, color="#60717a")
+    _annotate_report_points(ax, label_points, font)
+    ax_title.text(0.08, 0.405, f"Smith Chart 由 SDATA? 复数 Γ 自绘，阻抗网格按 {reference_ohm:g}Ω 归一化；图内直接标出关键阻抗。", transform=ax_title.transAxes, fontsize=8.2, fontproperties=font, color="#60717a")
+    _draw_report_table(ax_title, marker_rows, [0.08, 0.135, 0.84, 0.22], font, font_size=7.0, header=True)
     return fig
 
 
@@ -1111,7 +1273,7 @@ def _build_na_valley_pages(plt, result, logo_path, font):
     chunk_size = 24
     for page_index, start in enumerate(range(0, len(valleys), chunk_size), start=1):
         fig, ax = _new_report_figure(plt, f"S11 谷值列表 第 {page_index} 页", logo_path, font)
-        rows = [["#", "频率 MHz", "S11", "RL", "VSWR", "绝对-10dB带宽", "相对+3dB带宽"]]
+        rows = [["#", "频率 MHz", "S11 / RL", "VSWR", "绝对-10dB带宽", "相对+3dB带宽"]]
         for index, valley in enumerate(valleys[start:start + chunk_size], start=start + 1):
             abs10 = (valley.get("bandwidths") or {}).get("absolute_10db") or {}
             rel3 = (valley.get("bandwidths") or {}).get("relative_3db") or {}
@@ -1119,8 +1281,7 @@ def _build_na_valley_pages(plt, result, logo_path, font):
                 [
                     str(index),
                     f"{valley.get('frequency_mhz', 0):.6f}",
-                    _format_db(valley.get("s11_db")),
-                    _format_db(valley.get("return_loss_db")),
+                    _format_s11_rl(valley.get("s11_db")),
                     _format_vswr(valley.get("vswr")),
                     format_hz(abs10.get("width_hz")),
                     format_hz(rel3.get("width_hz")),
@@ -1152,6 +1313,176 @@ def _draw_report_table(ax, rows, bbox, font, font_size=8.0, header=False):
         else:
             cell.set_facecolor("#ffffff")
     return table
+
+
+def _annotate_report_points(ax, label_points, font):
+    """Place compact point labels while trying several offsets to avoid overlaps."""
+    if not label_points:
+        return
+    order = {
+        "center": 0,
+        "target": 1,
+        "absolute_3db_left": 2,
+        "absolute_3db_right": 3,
+        "absolute_10db_left": 4,
+        "absolute_10db_right": 5,
+    }
+    occupied = []
+    dpi_scale = ax.figure.dpi / 72.0
+    try:
+        axis_bounds = ax.get_window_extent().bounds
+    except Exception:
+        axis_bounds = None
+
+    for point in sorted(label_points, key=lambda item: order.get(item.get("type"), 99)):
+        if point.get("x") is None or point.get("y") is None or not point.get("text"):
+            continue
+        candidates = _annotation_offsets(point.get("type"))
+        text_lines = str(point["text"]).split("\n")
+        text_width = max(54, max(len(line) for line in text_lines) * 5.8)
+        text_height = 12 * len(text_lines) + 8
+        anchor_x, anchor_y = ax.transData.transform((point["x"], point["y"]))
+        chosen = candidates[-1]
+        for dx_pt, dy_pt in candidates:
+            dx = dx_pt * dpi_scale
+            dy = dy_pt * dpi_scale
+            rect = _annotation_rect(anchor_x + dx, anchor_y + dy, text_width, text_height, dx_pt, dy_pt)
+            if axis_bounds and not _rect_inside(rect, axis_bounds, margin=2):
+                continue
+            if any(_rects_overlap(rect, prev) for prev in occupied):
+                continue
+            chosen = (dx_pt, dy_pt)
+            occupied.append(rect)
+            break
+        else:
+            dx = chosen[0] * dpi_scale
+            dy = chosen[1] * dpi_scale
+            occupied.append(_annotation_rect(anchor_x + dx, anchor_y + dy, text_width, text_height, chosen[0], chosen[1]))
+
+        ax.annotate(
+            point["text"],
+            (point["x"], point["y"]),
+            textcoords="offset points",
+            xytext=chosen,
+            fontsize=6.7,
+            fontproperties=font,
+            color="#172026",
+            ha="left" if chosen[0] >= 0 else "right",
+            va="bottom" if chosen[1] >= 0 else "top",
+            bbox={"boxstyle": "round,pad=0.28", "fc": "#fff8e8", "ec": point.get("color", "#60717a"), "lw": 0.8, "alpha": 0.94},
+            arrowprops={"arrowstyle": "-", "color": point.get("color", "#60717a"), "lw": 0.7, "shrinkA": 0, "shrinkB": 4},
+            zorder=7,
+        )
+
+
+def _annotation_offsets(point_type):
+    left_first = [(-12, 16), (-12, -24), (-68, 22), (-68, -30), (14, 28), (14, -36)]
+    right_first = [(12, 16), (12, -24), (68, 22), (68, -30), (-14, 28), (-14, -36)]
+    center_first = [(14, 16), (-14, 18), (14, -30), (-14, -32), (62, 24), (-62, 24)]
+    if point_type and point_type.endswith("_left"):
+        return left_first
+    if point_type and point_type.endswith("_right"):
+        return right_first
+    if point_type == "target":
+        return [(-14, 18), (-14, -30), (14, 18), (14, -30), (-66, 24), (66, 24)]
+    return center_first
+
+
+def _annotation_rect(anchor_x, anchor_y, width, height, dx_pt, dy_pt):
+    left = anchor_x if dx_pt >= 0 else anchor_x - width
+    bottom = anchor_y if dy_pt >= 0 else anchor_y - height
+    return (left, bottom, left + width, bottom + height)
+
+
+def _rect_inside(rect, bounds, margin=0):
+    left, bottom, right, top = rect
+    bx, by, bw, bh = bounds
+    return left >= bx + margin and right <= bx + bw - margin and bottom >= by + margin and top <= by + bh - margin
+
+
+def _rects_overlap(a, b, padding=3):
+    return not (a[2] + padding < b[0] or b[2] + padding < a[0] or a[3] + padding < b[1] or b[3] + padding < a[1])
+
+
+def _report_marker_label(point, value_key="s11"):
+    short = _short_marker_label(point.get("type"), point.get("label"))
+    freq = point.get("frequency_mhz")
+    if value_key == "vswr":
+        value = f"VSWR {_format_vswr(point.get('vswr'))}"
+    else:
+        value = f"S11 {_format_db(point.get('s11_db'))}"
+    return f"{short} {freq:.3f}MHz\n{value}" if freq is not None else f"{short}\n{value}"
+
+
+def _report_smith_label(marker):
+    short = _short_marker_label(marker.get("type"), marker.get("label"))
+    impedance = marker.get("impedance_label") or "--"
+    return f"{short}\n{impedance}"
+
+
+def _short_marker_label(point_type, fallback=None):
+    labels = {
+        "center": "中心",
+        "target": "理想",
+        "absolute_3db_left": "-3L",
+        "absolute_3db_right": "-3R",
+        "absolute_10db_left": "-10L",
+        "absolute_10db_right": "-10R",
+    }
+    return labels.get(point_type, fallback or point_type or "")
+
+
+def _draw_smith_impedance_grid(ax, reference_ohm, font):
+    try:
+        from matplotlib.patches import Circle
+        ax.add_artist(Circle((0, 0), 1, color="#1f393f", fill=False, linewidth=1.0))
+    except Exception:
+        pass
+
+    ax.axhline(0, color="#1f393f", linewidth=0.8, alpha=0.35)
+    ax.axvline(0, color="#1f393f", linewidth=0.8, alpha=0.18)
+    grid_color = "#60717a"
+    resistance_values = [0, 0.2, 0.5, 1, 2, 5]
+    reactance_values = [0.2, 0.5, 1, 2, 5]
+    r_axis = [i * 0.04 for i in range(0, 501)]
+    x_axis = [-10 + i * 0.04 for i in range(0, 501)]
+
+    for resistance in resistance_values:
+        points = [_gamma_from_normalized_impedance(resistance, reactance) for reactance in x_axis]
+        _plot_gamma_curve(ax, points, grid_color, alpha=0.22)
+        label_gamma = _gamma_from_normalized_impedance(resistance, 0)
+        if label_gamma:
+            label = "短路" if resistance == 0 else f"{resistance * reference_ohm:g}Ω"
+            ax.text(label_gamma.real, -0.055, label, fontsize=6.5, color=grid_color, fontproperties=font, ha="center", va="top")
+
+    for reactance in reactance_values:
+        for sign, va in ((1, "bottom"), (-1, "top")):
+            value = sign * reactance
+            points = [_gamma_from_normalized_impedance(resistance, value) for resistance in r_axis]
+            _plot_gamma_curve(ax, points, grid_color, alpha=0.18)
+            label_gamma = _gamma_from_normalized_impedance(0.2, value)
+            if label_gamma:
+                label = f"{'+' if sign > 0 else '-'}j{reactance * reference_ohm:g}Ω"
+                ax.text(label_gamma.real, label_gamma.imag, label, fontsize=6.5, color=grid_color, fontproperties=font, ha="left", va=va)
+
+    ax.text(-0.98, -0.98, f"Z0={reference_ohm:g}Ω", fontsize=7.2, color="#455a64", fontproperties=font)
+
+
+def _gamma_from_normalized_impedance(resistance, reactance):
+    denominator = complex(resistance + 1.0, reactance)
+    if abs(denominator) < 1e-12:
+        return None
+    gamma = (complex(resistance, reactance) - 1.0) / denominator
+    if abs(gamma) > 1.0001:
+        return None
+    return gamma
+
+
+def _plot_gamma_curve(ax, points, color, alpha=0.2):
+    valid = [point for point in points if point is not None and abs(point) <= 1.0001]
+    if len(valid) < 2:
+        return
+    ax.plot([point.real for point in valid], [point.imag for point in valid], color=color, linewidth=0.55, alpha=alpha)
 
 
 def _bandwidth_titles():
@@ -1203,10 +1534,30 @@ def _format_db(value):
     return f"{float(value):.3f} dB"
 
 
+def _format_s11_rl(s11_db):
+    if s11_db is None:
+        return "--"
+    return f"{float(s11_db):.3f} / {-float(s11_db):.3f} dB"
+
+
 def _format_vswr(value):
     if value is None:
         return "∞"
     return f"{float(value):.3f}"
+
+
+def _vswr_plot_cap(values):
+    finite_values = [float(value) for value in values if value is not None and math.isfinite(float(value))]
+    if not finite_values:
+        return 6.0
+    return max(2.2, min(10.0, max(finite_values) + 0.4, vswr_from_s11_db(-3) + 0.25))
+
+
+def format_impedance(resistance_ohm, reactance_ohm):
+    if resistance_ohm is None or reactance_ohm is None:
+        return "--"
+    sign = "+" if float(reactance_ohm) >= 0 else "-"
+    return f"{float(resistance_ohm):.2f} {sign} j{abs(float(reactance_ohm)):.2f} Ω"
 
 
 def _format_percent(value):
@@ -1239,8 +1590,7 @@ def _format_endpoint_cell(bw, side):
     return "\n".join(
         [
             format_hz(bw.get(f"{side}_hz")),
-            f"S11 {_format_db(bw.get(f'{side}_s11_db'))}",
-            f"RL {_format_db(bw.get(f'{side}_return_loss_db'))}",
+            _format_s11_rl(bw.get(f"{side}_s11_db")),
             f"VSWR {_format_vswr(bw.get(f'{side}_vswr'))}",
         ]
     )
