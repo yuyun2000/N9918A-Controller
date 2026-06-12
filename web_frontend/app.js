@@ -4,6 +4,7 @@ const state = {
   result: null,
   naResult: null,
   busy: false,
+  aiAnalyzing: false,
   wasMeasuring: false,
   mode: "SA",
   valleyPage: 1,
@@ -48,6 +49,7 @@ const elements = {
   metricPoints: $("metricPoints"),
   canvas: $("spectrumCanvas"),
   peakRows: $("peakRows"),
+  aiStatus: $("aiStatus"),
   aiResult: $("aiResult"),
   eventLog: $("eventLog"),
   downloadSlot: $("downloadSlot"),
@@ -115,6 +117,14 @@ const post = (path, data = {}) =>
 function setBusy(isBusy) {
   state.busy = isBusy;
   document.body.classList.toggle("is-busy", isBusy);
+}
+
+function setAiAnalyzing(isAnalyzing) {
+  state.aiAnalyzing = isAnalyzing;
+  elements.aiStatus.hidden = !isAnalyzing;
+  elements.aiResult.classList.toggle("is-thinking", isAnalyzing);
+  elements.analyzeBtn.disabled = isAnalyzing;
+  elements.analyzeBtn.textContent = isAnalyzing ? "AI 分析中..." : "AI 异常分析";
 }
 
 function userInfoPayload() {
@@ -189,7 +199,7 @@ function updateStatus(status) {
   elements.clearSaBtn.disabled =
     measuring || state.mode !== "SA" || (!connected && !status.has_single_data && !status.has_emi_data);
   elements.saveBtn.disabled = measuring || (!status.has_single_data && !status.has_emi_data);
-  elements.analyzeBtn.disabled = measuring || (!status.has_single_data && !status.has_emi_data);
+  elements.analyzeBtn.disabled = state.aiAnalyzing || measuring || (!status.has_single_data && !status.has_emi_data);
   elements.pdfBtn.disabled = measuring || !status.has_emi_data;
   elements.demoBtn.disabled = measuring;
   elements.modeSA.disabled = measuring || status.switching_mode;
@@ -923,8 +933,22 @@ function bindEvents() {
   );
   elements.analyzeBtn.addEventListener("click", () =>
     runAction("AI 异常分析", async () => {
-      const data = await post("/api/ai/analyze");
-      elements.aiResult.textContent = data.result;
+      setAiAnalyzing(true);
+      elements.aiResult.textContent = [
+        "AI 正在分析 SA 筛查结果...",
+        "",
+        "已发送峰值表、Margin 和筛查上下文到配置的 Responses 服务。",
+        "这个步骤可能需要几十秒，请不要重复点击；完成后结果会自动显示在这里。",
+      ].join("\n");
+      try {
+        const data = await post("/api/ai/analyze");
+        elements.aiResult.textContent = data.result || "AI 未返回分析文本。";
+      } catch (error) {
+        elements.aiResult.textContent = `AI 分析失败：${error.message}`;
+        throw error;
+      } finally {
+        setAiAnalyzing(false);
+      }
     }),
   );
   elements.pdfBtn.addEventListener("click", () =>

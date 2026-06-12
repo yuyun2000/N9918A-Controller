@@ -156,6 +156,7 @@ class WebAppSmokeTest(unittest.TestCase):
             self.assertIn("理想频点附近损耗".encode("utf-8"), page.data)
             self.assertIn("Smith Chart 与阻抗".encode("utf-8"), page.data)
             self.assertIn("手动清理 Trace".encode("utf-8"), page.data)
+            self.assertIn("AI 正在分析".encode("utf-8"), page.data)
         finally:
             page.close()
 
@@ -165,6 +166,8 @@ class WebAppSmokeTest(unittest.TestCase):
         self.assertIn("pos-two", app_js)
         self.assertIn("renderVswr", app_js)
         self.assertIn("drawSmithGrid", app_js)
+        self.assertIn("setAiAnalyzing", app_js)
+        self.assertIn("/api/ai/analyze", app_js)
 
         presets = self.client.get("/api/presets").get_json()
         self.assertTrue(presets["ok"])
@@ -499,6 +502,8 @@ class AIClientRegressionTest(unittest.TestCase):
         captured = {}
 
         class FakeResponse:
+            headers = {"Content-Type": "text/event-stream"}
+
             def __enter__(self):
                 return self
 
@@ -506,7 +511,11 @@ class AIClientRegressionTest(unittest.TestCase):
                 return False
 
             def read(self):
-                return b'{"output":[{"content":[{"type":"output_text","text":"analysis ok"}]}]}'
+                return (
+                    b'data: {"type":"response.output_text.delta","delta":"analysis "}\n\n'
+                    b'data: {"type":"response.output_text.delta","delta":"ok"}\n\n'
+                    b'data: [DONE]\n\n'
+                )
 
         def fake_urlopen(request, timeout=None):
             captured["url"] = request.full_url
@@ -530,10 +539,20 @@ class AIClientRegressionTest(unittest.TestCase):
         self.assertEqual(captured["url"], "http://192.0.2.10:3000/v1/responses")
         self.assertEqual(captured["body"]["model"], "gpt-5.5")
         self.assertEqual(captured["body"]["instructions"], "system prompt")
-        self.assertEqual(captured["body"]["input"], "analyze this")
+        self.assertIsInstance(captured["body"]["input"], list)
+        self.assertEqual(
+            captured["body"]["input"],
+            [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "analyze this"}],
+                }
+            ],
+        )
         self.assertEqual(captured["body"]["reasoning"], {"effort": "xhigh"})
         self.assertEqual(captured["body"]["max_output_tokens"], 123)
         self.assertFalse(captured["body"]["store"])
+        self.assertTrue(captured["body"]["stream"])
         self.assertNotIn("messages", captured["body"])
         self.assertNotIn("chat/completions", captured["url"])
 
@@ -545,6 +564,13 @@ class AIClientRegressionTest(unittest.TestCase):
             ),
             "chat-like compatibility",
         )
+
+    def test_ai_sse_parser_supports_completed_event(self):
+        raw = (
+            'event: response.completed\n'
+            'data: {"type":"response.completed","response":{"output_text":"final text"}}\n\n'
+        )
+        self.assertEqual(ChatBot.extract_output_text(ChatBot._parse_sse_response(raw)), "final text")
 
 
 class NAAlgorithmTest(unittest.TestCase):

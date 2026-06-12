@@ -153,11 +153,63 @@ class ChatBot:
         return {
             "model": self.model,
             "instructions": self.system_message,
-            "input": message,
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": message,
+                        }
+                    ],
+                }
+            ],
             "reasoning": {"effort": self.reasoning_effort},
             "max_output_tokens": self.max_output_tokens,
             "store": False,
+            "stream": True,
         }
+
+    @staticmethod
+    def _extract_sse_event_text(event: dict) -> str:
+        event_type = event.get("type")
+        if isinstance(event.get("delta"), str) and (
+            event_type in {"response.output_text.delta", "output_text.delta"} or event_type.endswith(".delta")
+        ):
+            return event["delta"]
+        if isinstance(event.get("text"), str) and event_type and event_type.endswith(".delta"):
+            return event["text"]
+        return ""
+
+    @staticmethod
+    def _parse_sse_response(raw_text: str) -> dict:
+        chunks = []
+        completed = None
+        for block in raw_text.replace("\r\n", "\n").split("\n\n"):
+            data_lines = []
+            for line in block.splitlines():
+                if line.startswith("data:"):
+                    data_lines.append(line[5:].strip())
+            if not data_lines:
+                continue
+            data = "\n".join(data_lines).strip()
+            if not data or data == "[DONE]":
+                continue
+            try:
+                event = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            delta = ChatBot._extract_sse_event_text(event)
+            if delta:
+                chunks.append(delta)
+                continue
+            if event.get("type") in {"response.completed", "response.done", "completed"}:
+                completed = event.get("response") or event
+        if chunks:
+            return {"output_text": "".join(chunks), "stream_completed": completed}
+        if completed:
+            return completed
+        return {"output_text": ""}
 
     def _post_responses(self, payload: dict) -> dict:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -167,12 +219,17 @@ class ChatBot:
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
+                "Accept": "text/event-stream",
             },
             method="POST",
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-                return json.loads(response.read().decode("utf-8"))
+                raw_text = response.read().decode("utf-8")
+                content_type = response.headers.get("Content-Type", "") if response.headers else ""
+                if "text/event-stream" in content_type or raw_text.lstrip().startswith(("event:", "data:")):
+                    return self._parse_sse_response(raw_text)
+                return json.loads(raw_text)
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"Responses API HTTP {exc.code}: {detail}") from exc

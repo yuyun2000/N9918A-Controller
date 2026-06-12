@@ -613,6 +613,44 @@ th {
   line-height: 1.7;
 }
 
+#aiResult.is-thinking {
+  border-color: rgba(0, 169, 165, 0.36);
+  background:
+    linear-gradient(120deg, rgba(0, 169, 165, 0.09), rgba(255, 255, 255, 0.62)),
+    rgba(255, 255, 255, 0.54);
+}
+
+.ai-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(0, 169, 165, 0.24);
+  border-radius: 18px;
+  background: rgba(232, 255, 250, 0.66);
+  color: var(--rail);
+  box-shadow: 0 10px 28px rgba(10, 106, 114, 0.1);
+}
+
+.ai-status[hidden] {
+  display: none;
+}
+
+.ai-status span:last-child {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.ai-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(10, 106, 114, 0.2);
+  border-top-color: var(--teal);
+  border-radius: 50%;
+  animation: spin 820ms linear infinite;
+}
+
 #eventLog {
   margin: 0;
   padding-left: 24px;
@@ -639,6 +677,12 @@ th {
 @keyframes pulse {
   50% {
     transform: scale(1.18);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 

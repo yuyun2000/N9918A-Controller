@@ -179,6 +179,11 @@
             <h2>异常分析</h2>
             <button class="help-button" type="button" aria-label="AI 异常分析说明" data-help="AI 只用于辅助定位异常频点和可能原因。会把峰值表发送到配置的 AI 服务；客户数据不可外发时请不要点击。">?</button>
           </div>
+          <div id="aiStatus" class="ai-status" hidden>
+            <span class="ai-spinner" aria-hidden="true"></span>
+            <strong>AI 正在分析</strong>
+            <span>Responses 流式返回中，请勿重复点击或刷新页面。</span>
+          </div>
           <pre id="aiResult">AI 分析结果会显示在这里。</pre>
         </section>
 
