@@ -218,7 +218,8 @@ h1 {
   font-size: 0.88rem;
 }
 
-.shared-connection-panel {
+.shared-connection-panel,
+.shared-report-panel {
   margin-bottom: 18px;
 }
 
@@ -233,7 +234,7 @@ h1 {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 420px;
   grid-template-areas:
-    "run report"
+    "run run"
     "chart chart"
     "peak ai"
     "log log";
@@ -588,7 +589,7 @@ th {
 
   .workspace {
     grid-template-areas:
-      "run report"
+      "run run"
       "chart chart"
       "peak peak"
       "ai ai"
@@ -611,7 +612,6 @@ th {
   .workspace {
     grid-template-areas:
       "run"
-      "report"
       "chart"
       "peak"
       "ai"
@@ -716,6 +716,7 @@ th {
   grid-template-areas:
     "naflow nastatus nabw"
     "naflow nas11 nas11"
+    "napoints napoints napoints"
     "nasmith navalley navalley"
     "log log log";
 }
@@ -724,6 +725,7 @@ th {
 .na-status-panel { grid-area: nastatus; }
 .na-s11-panel { grid-area: nas11; }
 .na-bandwidth-panel { grid-area: nabw; }
+.na-point-panel { grid-area: napoints; }
 .na-smith-panel { grid-area: nasmith; }
 .na-valley-panel { grid-area: navalley; }
 
@@ -807,6 +809,7 @@ th {
     grid-template-areas:
       "naflow nastatus"
       "nas11 nas11"
+      "napoints napoints"
       "nabw nasmith"
       "navalley navalley";
   }
@@ -824,6 +827,7 @@ th {
       "nastatus"
       "nas11"
       "nabw"
+      "napoints"
       "nasmith"
       "navalley";
   }

@@ -1,6 +1,6 @@
 # N9918A-Controller
 
-基于 Keysight N9918A FieldFox 的 SA/NA Web 控制台，集成 Mini-Circuits RF Switch 自动切换、SA 单次频谱采集、15s/5min EMI 采样、NA 天线 S11 测量、Fast Cal 自动校准、峰值/谷值判定、AI 异常分析和报告导出。
+基于 Keysight N9918A FieldFox 的 SA/NA Web 控制台，集成 Mini-Circuits RF Switch 自动切换、SA 单次频谱采集、15s/5min EMI 采样、NA 天线 S11/回波损耗/驻波比测量、Fast Cal 自动校准、峰值/谷值判定、AI 异常分析和报告导出。
 
 当前入口是 Web 前端：`web_app.py` + `web_frontend/`。页面顶部可选择 `SA 频谱测试` 或 `NA 天线测量`；仓库只保留 Web 控制台正在使用的流程和必要支撑文件，不再复用旧的 `NA-mode/` 历史代码。
 
@@ -84,7 +84,7 @@ http://127.0.0.1:5000
 1. 顶部切到 `NA 天线测量`；仪器已连接时会发送 `INST:SEL "NA";*OPC?`。
 2. 选择预设并应用：
    - `ANT_433`: 300-500MHz
-   - `ANT_898`: 798-998MHz
+   - `ANT_868`: 768-968MHz
    - `ANT_915`: 815-1015MHz
    - `ANT_2450`: 2.2-2.7GHz
    - `ANT_5G`: 4.8-6.0GHz
@@ -93,8 +93,9 @@ http://127.0.0.1:5000
    - OPEN: `B2C1`，先执行 `CORR:COLL:METH:QCAL:CAL 1`，再执行 `CORR:COLL:INT 1;*OPC?`
    - LOAD: `B1C1`，执行 `CORR:COLL:LOAD 1;*OPC?`
    - SAVE/ANTENNA: 执行 `CORR:COLL:SAVE 0`，再切到 `B2C2`
-4. 测量读取 `CALC:DATA:FDATa?` 得到 S11 dB，读取 `CALC:DATA:SDATA?` 得到复数 Gamma；普通预设显示 S11 曲线、中心谷、绝对/相对 3dB/10dB 带宽和 Smith Chart。
+4. 测量读取 `CALC:DATA:FDATa?` 得到 S11 dB，读取 `CALC:DATA:SDATA?` 得到复数 Gamma；普通预设显示 S11 曲线、中心谷、回波损耗、驻波比、绝对/相对 3dB/10dB 带宽和 Smith Chart。
 5. 带宽有两套口径：绝对阈值 `S11 <= -3dB/-10dB`，相对谷值 `S11 <= valley+3dB/valley+10dB`，端点用线性插值估算。
+6. NA 报告导出为 PDF，包含 M5Stack logo、项目/工程师信息、中心频率、端点 S11、回波损耗、驻波比、S11 曲线、Smith Chart 和谷值列表。
 
 ## 代码结构
 

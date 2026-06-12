@@ -5,10 +5,8 @@
 from __future__ import annotations
 
 import csv
-import html
 import json
 import math
-import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -40,15 +38,15 @@ NA_PRESET_CONFIGS = {
         "full_sweep": False,
         "description": "300-500MHz，搜索 433MHz 附近 S11 谷值与带宽。",
     },
-    "ANT_898": {
-        "name": "898MHz 天线",
-        "label": "898MHz",
-        "start_freq": 798e6,
-        "stop_freq": 998e6,
+    "ANT_868": {
+        "name": "868MHz 天线",
+        "label": "868MHz",
+        "start_freq": 768e6,
+        "stop_freq": 968e6,
         "points": 2001,
         "ifbw": 10e3,
         "full_sweep": False,
-        "description": "798-998MHz，适合 898MHz 天线调试。",
+        "description": "768-968MHz，适合 868MHz 天线调试。",
     },
     "ANT_915": {
         "name": "915MHz 天线",
@@ -389,11 +387,14 @@ def find_s11_valleys(frequencies, s11_db, min_separation_points=4, max_valleys=N
 
 
 def _valley_dict(frequencies, s11_db, idx, prominence):
+    s11_value = s11_db[idx]
     return {
         "index": idx,
         "frequency_hz": frequencies[idx],
         "frequency_mhz": frequencies[idx] / 1e6,
-        "s11_db": s11_db[idx],
+        "s11_db": s11_value,
+        "return_loss_db": return_loss_from_s11_db(s11_value),
+        "vswr": vswr_from_s11_db(s11_value),
         "prominence_db": max(0.0, prominence),
     }
 
@@ -403,6 +404,39 @@ def choose_primary_valley(valleys):
         return None
     valley = min(valleys, key=lambda item: item["s11_db"])
     return {k: v for k, v in valley.items() if k != "index"}
+
+
+def return_loss_from_s11_db(s11_db):
+    if s11_db is None:
+        return None
+    return round(-float(s11_db), 4)
+
+
+def gamma_from_s11_db(s11_db):
+    if s11_db is None:
+        return None
+    return 10 ** (float(s11_db) / 20.0)
+
+
+def vswr_from_s11_db(s11_db):
+    gamma = gamma_from_s11_db(s11_db)
+    if gamma is None or gamma >= 0.999999:
+        return None
+    return round((1.0 + gamma) / (1.0 - gamma), 4)
+
+
+def metric_point(label, frequency_hz, s11_db, point_type=None):
+    if frequency_hz is None or s11_db is None:
+        return None
+    return {
+        "type": point_type or label,
+        "label": label,
+        "frequency_hz": frequency_hz,
+        "frequency_mhz": frequency_hz / 1e6,
+        "s11_db": s11_db,
+        "return_loss_db": return_loss_from_s11_db(s11_db),
+        "vswr": vswr_from_s11_db(s11_db),
+    }
 
 
 def calculate_bandwidth(frequencies, s11_db, valley_index, threshold_db):
@@ -446,8 +480,14 @@ def calculate_bandwidth(frequencies, s11_db, valley_index, threshold_db):
         "width_hz": max(0.0, right_hz - left_hz),
         "left_s11_db": left_s11,
         "right_s11_db": right_s11,
+        "left_return_loss_db": return_loss_from_s11_db(left_s11),
+        "right_return_loss_db": return_loss_from_s11_db(right_s11),
+        "left_vswr": vswr_from_s11_db(left_s11),
+        "right_vswr": vswr_from_s11_db(right_s11),
         "complete": complete,
         "threshold_db": threshold_db,
+        "threshold_return_loss_db": return_loss_from_s11_db(threshold_db),
+        "threshold_vswr": vswr_from_s11_db(threshold_db),
     }
 
 
@@ -458,8 +498,14 @@ def _empty_bandwidth(threshold_db):
         "width_hz": None,
         "left_s11_db": None,
         "right_s11_db": None,
+        "left_return_loss_db": None,
+        "right_return_loss_db": None,
+        "left_vswr": None,
+        "right_vswr": None,
         "complete": False,
         "threshold_db": threshold_db,
+        "threshold_return_loss_db": return_loss_from_s11_db(threshold_db),
+        "threshold_vswr": vswr_from_s11_db(threshold_db),
     }
 
 
@@ -527,6 +573,8 @@ def build_smith_payload(frequencies, real, imag, s11_db, primary_valley_with_ind
                 "frequency_hz": frequencies[idx],
                 "frequency_mhz": frequencies[idx] / 1e6,
                 "s11_db": s11_db[idx],
+                "return_loss_db": return_loss_from_s11_db(s11_db[idx]),
+                "vswr": vswr_from_s11_db(s11_db[idx]),
                 "real": real[idx],
                 "imag": imag[idx],
             }
@@ -550,6 +598,8 @@ def build_smith_payload(frequencies, real, imag, s11_db, primary_valley_with_ind
                     "frequency_hz": target,
                     "frequency_mhz": target / 1e6,
                     "s11_db": bw.get(f"{side}_s11_db"),
+                    "return_loss_db": bw.get(f"{side}_return_loss_db"),
+                    "vswr": bw.get(f"{side}_vswr"),
                     "real": interpolate_series(frequencies, real, target),
                     "imag": interpolate_series(frequencies, imag, target),
                 }
@@ -560,6 +610,36 @@ def build_smith_payload(frequencies, real, imag, s11_db, primary_valley_with_ind
         "imag": [round(v, 8) for v in imag],
         "markers": markers,
     }
+
+
+def build_points_of_interest(frequencies, s11_db, primary_valley_with_index, bandwidths):
+    points = []
+    if primary_valley_with_index:
+        idx = primary_valley_with_index["index"]
+        point = metric_point("中心谷值", frequencies[idx], s11_db[idx], "center")
+        if point:
+            points.append(point)
+
+    labels = {
+        "absolute_3db": "绝对 -3dB",
+        "absolute_10db": "绝对 -10dB",
+        "relative_3db": "相对 +3dB",
+        "relative_10db": "相对 +10dB",
+    }
+    for key in ("absolute_3db", "absolute_10db", "relative_3db", "relative_10db"):
+        bw = (bandwidths or {}).get(key) or {}
+        for side, side_label in (("left", "左端点"), ("right", "右端点")):
+            point = metric_point(
+                f"{labels[key]} {side_label}",
+                bw.get(f"{side}_hz"),
+                bw.get(f"{side}_s11_db"),
+                f"{key}_{side}",
+            )
+            if point:
+                point["bandwidth_key"] = key
+                point["side"] = side
+                points.append(point)
+    return points
 
 
 def build_na_result(frequencies, s11_db, real=None, imag=None, config=None, preset_key=None):
@@ -579,8 +659,8 @@ def build_na_result(frequencies, s11_db, real=None, imag=None, config=None, pres
     primary_with_index = min(valleys, key=lambda item: item["s11_db"]) if valleys else None
     primary = choose_primary_valley(valleys)
     bandwidths = calculate_all_bandwidths(frequencies, s11_db, primary_with_index)
+    points_of_interest = build_points_of_interest(frequencies, s11_db, primary_with_index, bandwidths)
 
-    valley_lookup = {item["index"]: item for item in valleys}
     valleys_payload = []
     for valley in valleys:
         bw = bandwidth_for_valley(frequencies, s11_db, valley)
@@ -595,10 +675,13 @@ def build_na_result(frequencies, s11_db, real=None, imag=None, config=None, pres
         "series": {
             "frequency_mhz": [round(freq / 1e6, 6) for freq in frequencies],
             "s11_db": [round(value, 4) for value in s11_db],
+            "return_loss_db": [return_loss_from_s11_db(value) for value in s11_db],
+            "vswr": [vswr_from_s11_db(value) for value in s11_db],
         },
         "smith": smith,
         "primary_valley": primary,
         "bandwidths": bandwidths,
+        "points_of_interest": points_of_interest,
         "valleys": valleys_payload,
         "is_full_sweep": full_sweep,
         "measurement_time": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -617,17 +700,30 @@ def save_na_measurement_data(result, filename_prefix=None, output_dir="measureme
     csv_path = output / f"{filename_prefix}_s11.csv"
     with csv_path.open("w", newline="", encoding="utf-8") as file:
         writer = csv.writer(file)
-        writer.writerow(["Frequency (MHz)", "S11 (dB)"])
-        for freq_mhz, s11 in zip(result["series"].get("frequency_mhz", []), result["series"].get("s11_db", [])):
-            writer.writerow([freq_mhz, s11])
+        writer.writerow(["Frequency (MHz)", "S11 (dB)", "Return Loss (dB)", "VSWR"])
+        for freq_mhz, s11, return_loss, vswr in zip(
+            result["series"].get("frequency_mhz", []),
+            result["series"].get("s11_db", []),
+            result["series"].get("return_loss_db", []),
+            result["series"].get("vswr", []),
+        ):
+            writer.writerow([freq_mhz, s11, return_loss, vswr if vswr is not None else "Infinity"])
     saved.append(str(csv_path))
 
     valleys_path = output / f"{filename_prefix}_valleys.csv"
     with valleys_path.open("w", newline="", encoding="utf-8") as file:
         writer = csv.writer(file)
-        writer.writerow(["Frequency (MHz)", "S11 (dB)", "Prominence (dB)"])
+        writer.writerow(["Frequency (MHz)", "S11 (dB)", "Return Loss (dB)", "VSWR", "Prominence (dB)"])
         for valley in result.get("valleys", []):
-            writer.writerow([valley.get("frequency_mhz"), valley.get("s11_db"), valley.get("prominence_db")])
+            writer.writerow(
+                [
+                    valley.get("frequency_mhz"),
+                    valley.get("s11_db"),
+                    valley.get("return_loss_db"),
+                    valley.get("vswr") if valley.get("vswr") is not None else "Infinity",
+                    valley.get("prominence_db"),
+                ]
+            )
     saved.append(str(valleys_path))
 
     json_path = output / f"{filename_prefix}_result.json"
@@ -639,79 +735,270 @@ def save_na_measurement_data(result, filename_prefix=None, output_dir="measureme
 def export_na_report(result, user_info=None, output_dir="reports"):
     if not result or not result.get("series"):
         raise ValueError("No NA result to export.")
+
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)
+        import matplotlib.pyplot as plt
+        from matplotlib.backends.backend_pdf import PdfPages
+        from matplotlib.font_manager import FontProperties
+    except ImportError as exc:
+        raise ValueError("缺少 matplotlib，无法生成 NA PDF 报告。") from exc
+
     output = Path(output_dir)
     output.mkdir(exist_ok=True)
     config = result.get("config") or {}
     label = config.get("label") or result.get("preset_key") or "NA"
-    filename = safe_filename(f"NA天线测量-{label}-{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
+    filename = safe_filename(f"NA天线测量-{label}-{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
     path = output / filename
+    font = _load_report_font(FontProperties)
+    logo_path = Path(__file__).resolve().parent / "assets" / "m5logo2022.png"
 
+    with PdfPages(path) as pdf:
+        fig = _build_na_summary_page(plt, result, user_info or {}, logo_path, font)
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+        fig = _build_na_s11_page(plt, result, logo_path, font)
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+        fig = _build_na_smith_page(plt, result, logo_path, font)
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+        for fig in _build_na_valley_pages(plt, result, logo_path, font):
+            pdf.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
+
+    return path
+
+
+def _load_report_font(font_properties_cls):
+    for candidate in (
+        Path(__file__).resolve().parent / "utils" / "simhei.ttf",
+        Path(__file__).resolve().parent / "utils" / "simfang.ttf",
+        Path("C:/Windows/Fonts/simhei.ttf"),
+        Path("C:/Windows/Fonts/simfang.ttf"),
+    ):
+        if candidate.exists():
+            return font_properties_cls(fname=str(candidate))
+    return None
+
+
+def _new_report_figure(plt, title, logo_path, font):
+    fig = plt.figure(figsize=(11.69, 8.27))
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.axis("off")
+    if logo_path.exists():
+        try:
+            image = plt.imread(str(logo_path))
+            logo_ax = fig.add_axes([0.055, 0.885, 0.095, 0.08])
+            logo_ax.imshow(image)
+            logo_ax.axis("off")
+        except Exception:
+            pass
+    ax.text(0.16, 0.94, title, fontsize=21, fontproperties=font, weight="bold", color="#172026")
+    ax.text(0.16, 0.902, "M5Stack Technology Co., Ltd / N9918A FieldFox", fontsize=10.5, fontproperties=font, color="#60717a")
+    ax.plot([0.055, 0.945], [0.875, 0.875], color="#1f393f", linewidth=1.2)
+    return fig, ax
+
+
+def _build_na_summary_page(plt, result, user_info, logo_path, font):
+    fig, ax = _new_report_figure(plt, "N9918A NA 天线测量报告", logo_path, font)
+    config = result.get("config") or {}
     primary = result.get("primary_valley") or {}
-    bandwidths = result.get("bandwidths") or {}
-    valleys = result.get("valleys") or []
-    user_info = user_info or {}
+    measurement_time = result.get("measurement_time") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    rows = []
-    for key, title in [
+    info_rows = [
+        ["客户", user_info.get("customer", ""), "产品名/EUT", user_info.get("eut", "")],
+        ["型号", user_info.get("model", ""), "工程师", user_info.get("engineer", "")],
+        ["备注", user_info.get("remark", ""), "测试时间", measurement_time],
+        ["天线预设", config.get("name", result.get("preset_key", "NA")), "频率范围", f"{format_hz(config.get('start_freq'))} - {format_hz(config.get('stop_freq'))}"],
+        ["扫描点数", str(config.get("points", "--")), "IFBW", format_hz(config.get("ifbw"))],
+    ]
+    _draw_report_table(ax, info_rows, [0.06, 0.62, 0.88, 0.22], font, font_size=9.2)
+
+    metric_rows = [
+        ["中心频率", _format_mhz(primary.get("frequency_mhz")), "S11", _format_db(primary.get("s11_db"))],
+        ["回波损耗", _format_db(primary.get("return_loss_db")), "驻波比 VSWR", _format_vswr(primary.get("vswr"))],
+    ]
+    _draw_report_table(ax, metric_rows, [0.06, 0.49, 0.88, 0.09], font, font_size=10)
+
+    bandwidth_rows = [["口径", "左频率", "左S11", "左RL", "左VSWR", "右频率", "右S11", "右RL", "右VSWR", "带宽", "状态"]]
+    for key, title in _bandwidth_titles():
+        bw = (result.get("bandwidths") or {}).get(key) or {}
+        bandwidth_rows.append(
+            [
+                title,
+                format_hz(bw.get("left_hz")),
+                _format_db(bw.get("left_s11_db")),
+                _format_db(bw.get("left_return_loss_db")),
+                _format_vswr(bw.get("left_vswr")),
+                format_hz(bw.get("right_hz")),
+                _format_db(bw.get("right_s11_db")),
+                _format_db(bw.get("right_return_loss_db")),
+                _format_vswr(bw.get("right_vswr")),
+                format_hz(bw.get("width_hz")),
+                "完整" if bw.get("complete") else "不完整/未跨阈值",
+            ]
+        )
+    _draw_report_table(ax, bandwidth_rows, [0.035, 0.18, 0.93, 0.24], font, font_size=6.8, header=True)
+
+    ax.text(0.06, 0.115, "说明：RL=Return Loss= -S11(dB)；VSWR 由 |Γ|=10^(S11/20) 计算。绝对口径使用 -3/-10dB 阈值，相对口径使用谷值+3/+10dB。", fontsize=9, fontproperties=font, color="#60717a")
+    return fig
+
+
+def _build_na_s11_page(plt, result, logo_path, font):
+    fig, ax_title = _new_report_figure(plt, "S11 曲线与端点标记", logo_path, font)
+    ax = fig.add_axes([0.08, 0.18, 0.84, 0.62])
+    series = result.get("series") or {}
+    x_vals = series.get("frequency_mhz") or []
+    y_vals = series.get("s11_db") or []
+    if not x_vals or not y_vals:
+        ax.text(0.5, 0.5, "暂无 S11 数据", transform=ax.transAxes, ha="center", va="center", fontproperties=font)
+        return fig
+
+    if max(x_vals) / max(min(v for v in x_vals if v > 0), 0.001) > 4:
+        ax.semilogx(x_vals, y_vals, color="#0a6a72", linewidth=1.5, label="S11 dB")
+    else:
+        ax.plot(x_vals, y_vals, color="#0a6a72", linewidth=1.5, label="S11 dB")
+    ax.axhline(-3, color="#d9822b", linestyle="--", linewidth=1, label="-3dB")
+    ax.axhline(-10, color="#b7442e", linestyle="--", linewidth=1, label="-10dB")
+
+    colors = {
+        "center": "#b7442e",
+        "absolute_3db_left": "#d9822b",
+        "absolute_3db_right": "#d9822b",
+        "absolute_10db_left": "#b7442e",
+        "absolute_10db_right": "#b7442e",
+    }
+    for point in result.get("points_of_interest", []):
+        point_type = point.get("type")
+        if point_type not in colors:
+            continue
+        ax.scatter(point.get("frequency_mhz"), point.get("s11_db"), s=38, color=colors[point_type], zorder=5)
+        ax.annotate(
+            f"{point.get('label')}\n{point.get('frequency_mhz'):.3f}MHz\nVSWR {_format_vswr(point.get('vswr'))}",
+            (point.get("frequency_mhz"), point.get("s11_db")),
+            textcoords="offset points",
+            xytext=(8, 8),
+            fontsize=7,
+            fontproperties=font,
+        )
+
+    ax.set_xlabel("Frequency (MHz)", fontproperties=font)
+    ax.set_ylabel("S11 (dB)", fontproperties=font)
+    ax.grid(True, alpha=0.25)
+    ax.legend(prop=font, loc="best")
+    ax_title.text(0.08, 0.1, "图中标记中心谷值、绝对 -3dB 端点和绝对 -10dB 端点；报告首页表格给出端点 S11、回波损耗和 VSWR。", fontsize=9, fontproperties=font, color="#60717a")
+    return fig
+
+
+def _build_na_smith_page(plt, result, logo_path, font):
+    fig, ax_title = _new_report_figure(plt, "Smith Chart 标记", logo_path, font)
+    ax = fig.add_axes([0.1, 0.16, 0.55, 0.66])
+    smith = result.get("smith")
+    if not smith:
+        ax.axis("off")
+        ax.text(0.5, 0.5, "全扫宽结果不显示 Smith Chart", transform=ax.transAxes, ha="center", va="center", fontproperties=font)
+        return fig
+
+    circle = plt.Circle((0, 0), 1, color="#1f393f", fill=False, linewidth=1)
+    ax.add_artist(circle)
+    for radius in (0.25, 0.5, 0.75):
+        ax.add_artist(plt.Circle((0, 0), radius, color="#1f393f", fill=False, alpha=0.18, linewidth=0.8))
+    ax.axhline(0, color="#1f393f", linewidth=0.8, alpha=0.35)
+    ax.axvline(0, color="#1f393f", linewidth=0.8, alpha=0.35)
+    ax.plot(smith.get("real", []), smith.get("imag", []), color="#0a6a72", linewidth=1.4)
+
+    marker_rows = [["标记", "频率", "S11", "RL", "VSWR"]]
+    for marker in smith.get("markers", []):
+        marker_type = marker.get("type")
+        if marker_type not in {"center", "absolute_3db_left", "absolute_3db_right"}:
+            continue
+        color = "#b7442e" if marker_type == "center" else "#d9822b"
+        ax.scatter(marker.get("real"), marker.get("imag"), s=46, color=color, zorder=5)
+        ax.annotate(marker.get("label", ""), (marker.get("real"), marker.get("imag")), textcoords="offset points", xytext=(8, 6), fontsize=7, fontproperties=font)
+        marker_rows.append(
+            [
+                marker.get("label", ""),
+                _format_mhz(marker.get("frequency_mhz")),
+                _format_db(marker.get("s11_db")),
+                _format_db(marker.get("return_loss_db")),
+                _format_vswr(marker.get("vswr")),
+            ]
+        )
+
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_xlim(-1.05, 1.05)
+    ax.set_ylim(-1.05, 1.05)
+    ax.set_xlabel("Real(Γ)", fontproperties=font)
+    ax.set_ylabel("Imag(Γ)", fontproperties=font)
+    ax.grid(True, alpha=0.18)
+    _draw_report_table(ax_title, marker_rows, [0.68, 0.25, 0.27, 0.42], font, font_size=7.2, header=True)
+    ax_title.text(0.68, 0.71, "Smith Chart 按需求标记中心频率和绝对 -3dB 左右端点。", fontsize=9, fontproperties=font, color="#60717a")
+    return fig
+
+
+def _build_na_valley_pages(plt, result, logo_path, font):
+    valleys = result.get("valleys") or []
+    if not valleys:
+        fig, ax = _new_report_figure(plt, "S11 谷值列表", logo_path, font)
+        ax.text(0.06, 0.72, "暂无谷值数据。", fontsize=11, fontproperties=font)
+        return [fig]
+
+    pages = []
+    chunk_size = 28
+    for page_index, start in enumerate(range(0, len(valleys), chunk_size), start=1):
+        fig, ax = _new_report_figure(plt, f"S11 谷值列表 第 {page_index} 页", logo_path, font)
+        rows = [["#", "频率 MHz", "S11", "RL", "VSWR", "绝对-10dB带宽", "相对+3dB带宽"]]
+        for index, valley in enumerate(valleys[start:start + chunk_size], start=start + 1):
+            abs10 = (valley.get("bandwidths") or {}).get("absolute_10db") or {}
+            rel3 = (valley.get("bandwidths") or {}).get("relative_3db") or {}
+            rows.append(
+                [
+                    str(index),
+                    f"{valley.get('frequency_mhz', 0):.6f}",
+                    _format_db(valley.get("s11_db")),
+                    _format_db(valley.get("return_loss_db")),
+                    _format_vswr(valley.get("vswr")),
+                    format_hz(abs10.get("width_hz")),
+                    format_hz(rel3.get("width_hz")),
+                ]
+            )
+        _draw_report_table(ax, rows, [0.045, 0.12, 0.91, 0.72], font, font_size=7.4, header=True)
+        pages.append(fig)
+    return pages
+
+
+def _draw_report_table(ax, rows, bbox, font, font_size=8.0, header=False):
+    table = ax.table(cellText=rows, bbox=bbox, cellLoc="left")
+    table.auto_set_font_size(False)
+    table.set_fontsize(font_size)
+    for (row, _col), cell in table.get_celld().items():
+        cell.set_edgecolor("#ccd6d8")
+        cell.set_linewidth(0.55)
+        if font:
+            cell.get_text().set_fontproperties(font)
+        if header and row == 0:
+            cell.set_facecolor("#1f393f")
+            cell.get_text().set_color("#fff7e8")
+        elif row % 2 == 0:
+            cell.set_facecolor("#f6f0e2")
+        else:
+            cell.set_facecolor("#ffffff")
+    return table
+
+
+def _bandwidth_titles():
+    return [
         ("absolute_3db", "绝对 -3dB"),
         ("absolute_10db", "绝对 -10dB"),
         ("relative_3db", "相对 +3dB"),
         ("relative_10db", "相对 +10dB"),
-    ]:
-        bw = bandwidths.get(key) or {}
-        rows.append(
-            "<tr>"
-            f"<td>{html.escape(title)}</td>"
-            f"<td>{format_hz(bw.get('left_hz'))}</td>"
-            f"<td>{format_hz(bw.get('right_hz'))}</td>"
-            f"<td>{format_hz(bw.get('width_hz'))}</td>"
-            f"<td>{'完整' if bw.get('complete') else '不完整/未跨阈值'}</td>"
-            "</tr>"
-        )
-    valley_rows = []
-    for index, valley in enumerate(valleys[:200], start=1):
-        valley_rows.append(
-            "<tr>"
-            f"<td>{index}</td>"
-            f"<td>{valley.get('frequency_mhz', 0):.6f}</td>"
-            f"<td>{valley.get('s11_db', 0):.3f}</td>"
-            f"<td>{valley.get('prominence_db', 0):.3f}</td>"
-            "</tr>"
-        )
-
-    body = f"""
-<!doctype html>
-<html lang=\"zh-CN\">
-<head>
-  <meta charset=\"utf-8\" />
-  <title>NA 天线测量报告</title>
-  <style>
-    body {{ font-family: 'Microsoft YaHei', sans-serif; color: #172026; margin: 32px; }}
-    h1 {{ font-size: 30px; }}
-    table {{ border-collapse: collapse; width: 100%; margin: 14px 0 28px; }}
-    th, td {{ border: 1px solid #ccd6d8; padding: 8px 10px; text-align: left; }}
-    th {{ background: #eef6f5; }}
-    .muted {{ color: #60717a; }}
-  </style>
-</head>
-<body>
-  <h1>N9918A NA 天线测量报告</h1>
-  <p class=\"muted\">生成时间：{html.escape(result.get('measurement_time') or '')}</p>
-  <h2>项目信息</h2>
-  <p>客户：{html.escape(str(user_info.get('customer', '')))}；EUT：{html.escape(str(user_info.get('eut', '')))}；型号：{html.escape(str(user_info.get('model', '')))}；工程师：{html.escape(str(user_info.get('engineer', '')))}</p>
-  <h2>配置</h2>
-  <p>{html.escape(config.get('name', 'NA'))}，{format_hz(config.get('start_freq'))} - {format_hz(config.get('stop_freq'))}，点数 {config.get('points', '--')}，IFBW {format_hz(config.get('ifbw'))}</p>
-  <h2>中心谷值</h2>
-  <p>频率：{primary.get('frequency_mhz', 0):.6f} MHz；S11：{primary.get('s11_db', 0):.3f} dB</p>
-  <h2>带宽结果</h2>
-  <table><thead><tr><th>口径</th><th>左端点</th><th>右端点</th><th>带宽</th><th>状态</th></tr></thead><tbody>{''.join(rows)}</tbody></table>
-  <h2>谷值列表</h2>
-  <table><thead><tr><th>#</th><th>频率 MHz</th><th>S11 dB</th><th>显著性 dB</th></tr></thead><tbody>{''.join(valley_rows)}</tbody></table>
-</body>
-</html>
-"""
-    path.write_text(body, encoding="utf-8")
-    return path
+    ]
 
 
 def safe_filename(filename):
@@ -733,3 +1020,21 @@ def format_hz(value):
     if abs_value >= 1e3:
         return f"{value / 1e3:.6g} kHz"
     return f"{value:.6g} Hz"
+
+
+def _format_mhz(value):
+    if value is None:
+        return "--"
+    return f"{float(value):.6f} MHz"
+
+
+def _format_db(value):
+    if value is None:
+        return "--"
+    return f"{float(value):.3f} dB"
+
+
+def _format_vswr(value):
+    if value is None:
+        return "∞"
+    return f"{float(value):.3f}"

@@ -73,6 +73,7 @@ const elements = {
   smithCanvas: $("smithCanvas"),
   naPrimaryText: $("naPrimaryText"),
   bandwidthGrid: $("bandwidthGrid"),
+  pointRows: $("pointRows"),
   valleyRows: $("valleyRows"),
   valleyPrevBtn: $("valleyPrevBtn"),
   valleyNextBtn: $("valleyNextBtn"),
@@ -130,12 +131,12 @@ function setModeUi(mode) {
   elements.saWorkspace.classList.toggle("active", mode === "SA");
   elements.naWorkspace.classList.toggle("active", mode === "NA");
   elements.modeHint.textContent = mode === "NA"
-    ? "NA 模式会调用 FieldFox 网络分析功能；校准会自动执行 LOAD → OPEN → ANTENNA 的 switchbox 顺序。"
+    ? "NA 模式会调用 FieldFox 网络分析功能；校准会自动执行 OPEN(B2C1) → LOAD(B1C1) → ANTENNA(B2C2) 的 switchbox 顺序。"
     : "SA 模式保留原有频谱扫描、EMI 采样、AI 分析和 PDF 报告流程。";
   if (mode === "SA") {
     renderChart(state.result?.series, state.result?.peaks || []);
   } else {
-    renderNaS11(state.naResult?.series, state.naResult?.primary_valley, state.naResult?.bandwidths);
+    renderNaS11(state.naResult?.series, state.naResult?.primary_valley, state.naResult?.bandwidths, state.naResult?.points_of_interest);
     renderSmith(state.naResult?.smith, state.naResult?.is_full_sweep);
   }
 }
@@ -337,7 +338,7 @@ function renderChart(series, peaks = []) {
   drawAxisLabels(ctx, width, height, pad, `${minX.toFixed(3)} MHz`, `${maxX.toFixed(3)} MHz`, "幅度 dBμV");
 }
 
-function renderNaS11(series, primaryValley, bandwidths = {}) {
+function renderNaS11(series, primaryValley, bandwidths = {}, points = []) {
   const { ctx, width, height } = prepareCanvas(elements.naS11Canvas);
   ctx.clearRect(0, 0, width, height);
 
@@ -379,16 +380,36 @@ function renderNaS11(series, primaryValley, bandwidths = {}) {
     ctx.fillText(item.label, width - pad.right - 50, y(item.value) - 6);
   }
 
-  if (primaryValley) {
+  const pointColors = {
+    center: "#b7442e",
+    absolute_3db_left: "#d9822b",
+    absolute_3db_right: "#d9822b",
+    absolute_10db_left: "#b7442e",
+    absolute_10db_right: "#b7442e",
+  };
+  const plottedPoints = (points || []).filter((point) => pointColors[point.type]);
+  for (const point of plottedPoints) {
+    const px = x(point.frequency_mhz);
+    const py = y(point.s11_db);
+    ctx.fillStyle = pointColors[point.type];
+    ctx.beginPath();
+    ctx.arc(px, py, point.type === "center" ? 6 : 4.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#172026";
+    ctx.font = "13px Bahnschrift, sans-serif";
+    const label = point.type === "center"
+      ? `${point.frequency_mhz.toFixed(3)} MHz / S11 ${point.s11_db.toFixed(2)} dB / VSWR ${formatVswr(point.vswr)}`
+      : `${point.label} ${point.frequency_mhz.toFixed(3)} MHz`;
+    ctx.fillText(label, px + 10, py - 8);
+  }
+
+  if (!plottedPoints.length && primaryValley) {
     const px = x(primaryValley.frequency_mhz);
     const py = y(primaryValley.s11_db);
     ctx.fillStyle = "#d9822b";
     ctx.beginPath();
     ctx.arc(px, py, 6, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = "#172026";
-    ctx.font = "13px Bahnschrift, sans-serif";
-    ctx.fillText(`${primaryValley.frequency_mhz.toFixed(3)} MHz / ${primaryValley.s11_db.toFixed(2)} dB`, px + 10, py - 8);
   }
 
   drawAxisLabels(ctx, width, height, pad, `${minX.toFixed(3)} MHz`, `${maxX.toFixed(3)} MHz`, "S11 dB");
@@ -453,7 +474,7 @@ function renderSmith(smith, isFullSweep) {
 function renderBandwidths(data) {
   const primary = data?.primary_valley;
   if (primary) {
-    elements.naPrimaryText.textContent = `中心频率 ${primary.frequency_mhz.toFixed(6)} MHz，S11 ${primary.s11_db.toFixed(3)} dB`;
+    elements.naPrimaryText.textContent = `中心频率 ${primary.frequency_mhz.toFixed(6)} MHz，S11 ${formatDb(primary.s11_db)}，回波损耗 ${formatDb(primary.return_loss_db)}，VSWR ${formatVswr(primary.vswr)}`;
   } else {
     elements.naPrimaryText.textContent = "暂无中心谷值。";
   }
@@ -472,16 +493,49 @@ function renderBandwidths(data) {
     div.innerHTML = `
       <span>${label}</span>
       <strong>${bw.width_hz == null ? "--" : formatHz(bw.width_hz)}</strong>
-      <small>左 ${formatHz(bw.left_hz)} / 右 ${formatHz(bw.right_hz)} · ${bw.complete ? "完整" : "不完整或未跨阈值"}</small>
+      <small>左 ${formatHz(bw.left_hz)} · S11 ${formatDb(bw.left_s11_db)} · VSWR ${formatVswr(bw.left_vswr)}</small>
+      <small>右 ${formatHz(bw.right_hz)} · S11 ${formatDb(bw.right_s11_db)} · VSWR ${formatVswr(bw.right_vswr)}</small>
+      <small>${bw.complete ? "完整" : "不完整或未跨阈值"}</small>
     `;
     elements.bandwidthGrid.append(div);
+  }
+}
+
+function renderPoints(points = []) {
+  elements.pointRows.innerHTML = "";
+  if (!points.length) {
+    elements.pointRows.innerHTML = `<tr><td colspan="5">暂无中心或端点数据</td></tr>`;
+    return;
+  }
+  const preferredOrder = {
+    center: 0,
+    absolute_3db_left: 1,
+    absolute_3db_right: 2,
+    absolute_10db_left: 3,
+    absolute_10db_right: 4,
+    relative_3db_left: 5,
+    relative_3db_right: 6,
+    relative_10db_left: 7,
+    relative_10db_right: 8,
+  };
+  const rows = [...points].sort((a, b) => (preferredOrder[a.type] ?? 99) - (preferredOrder[b.type] ?? 99));
+  for (const point of rows) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${point.label || point.type}</td>
+      <td>${Number(point.frequency_mhz).toFixed(6)}</td>
+      <td>${formatDb(point.s11_db)}</td>
+      <td>${formatDb(point.return_loss_db)}</td>
+      <td>${formatVswr(point.vswr)}</td>
+    `;
+    elements.pointRows.append(tr);
   }
 }
 
 function renderValleys(valleys = []) {
   elements.valleyRows.innerHTML = "";
   if (!valleys.length) {
-    elements.valleyRows.innerHTML = `<tr><td colspan="6">暂无 NA 测量数据</td></tr>`;
+    elements.valleyRows.innerHTML = `<tr><td colspan="8">暂无 NA 测量数据</td></tr>`;
     elements.valleyPageInfo.textContent = "第 0 / 0 页";
     elements.valleyPrevBtn.disabled = true;
     elements.valleyNextBtn.disabled = true;
@@ -498,7 +552,9 @@ function renderValleys(valleys = []) {
     tr.innerHTML = `
       <td>${start + offset + 1}</td>
       <td>${valley.frequency_mhz.toFixed(6)}</td>
-      <td>${valley.s11_db.toFixed(3)}</td>
+      <td>${formatDb(valley.s11_db)}</td>
+      <td>${formatDb(valley.return_loss_db)}</td>
+      <td>${formatVswr(valley.vswr)}</td>
       <td>${(valley.prominence_db || 0).toFixed(3)}</td>
       <td>${abs10?.width_hz == null ? "--" : formatHz(abs10.width_hz)}</td>
       <td>${rel3?.width_hz == null ? "--" : formatHz(rel3.width_hz)}</td>
@@ -534,9 +590,10 @@ function renderNaStatus(data) {
   elements.naSaveBtn.disabled = busy || !data.series;
   elements.naExportBtn.disabled = busy || !data.series;
 
-  renderNaS11(data.series, data.primary_valley, data.bandwidths);
+  renderNaS11(data.series, data.primary_valley, data.bandwidths, data.points_of_interest);
   renderSmith(data.smith, data.is_full_sweep);
   renderBandwidths(data);
+  renderPoints(data.points_of_interest || []);
   renderValleys(data.valleys || []);
 }
 
@@ -730,7 +787,7 @@ function bindEvents() {
   }
   window.addEventListener("resize", () => {
     renderChart(state.result?.series, state.result?.peaks || []);
-    renderNaS11(state.naResult?.series, state.naResult?.primary_valley, state.naResult?.bandwidths);
+    renderNaS11(state.naResult?.series, state.naResult?.primary_valley, state.naResult?.bandwidths, state.naResult?.points_of_interest);
     renderSmith(state.naResult?.smith, state.naResult?.is_full_sweep);
   });
 }
@@ -825,6 +882,16 @@ function formatHz(value) {
   if (abs >= 1e6) return `${(number / 1e6).toFixed(abs >= 100e6 ? 3 : 4)} MHz`;
   if (abs >= 1e3) return `${(number / 1e3).toFixed(3)} kHz`;
   return `${number.toFixed(3)} Hz`;
+}
+
+function formatDb(value) {
+  if (value == null || Number.isNaN(Number(value))) return "--";
+  return `${Number(value).toFixed(3)} dB`;
+}
+
+function formatVswr(value) {
+  if (value == null || Number.isNaN(Number(value))) return "∞";
+  return Number(value).toFixed(3);
 }
 
 async function init() {

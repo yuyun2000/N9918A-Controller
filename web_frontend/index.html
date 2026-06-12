@@ -80,6 +80,22 @@
         </div>
       </section>
 
+      <section class="panel report-panel shared-report-panel">
+          <div class="panel-title">
+            <span>INFO</span>
+            <h2>报告信息</h2>
+            <button class="help-button" type="button" aria-label="报告信息说明" data-help="这些字段会写入 SA PDF 报告和 NA PDF 报告。NA 报告会同步记录产品名、工程师、中心频率、S11、回波损耗、驻波比、带宽端点和图表。涉及客户或项目敏感信息时，导出或使用 AI 分析前请确认数据可保存或外发。">?</button>
+          </div>
+          <div class="report-form">
+            <label>客户<input id="customer" value="M5Stack" /></label>
+            <label>被测设备<input id="eut" value="产品A" /></label>
+            <label>型号<input id="model" value="Model-X" /></label>
+            <label>工程师<input id="engineer" value="张工程师" /></label>
+            <label class="full">备注<input id="remark" value="首次测试" /></label>
+          </div>
+      </section>
+
+
       <main id="saWorkspace" class="workspace mode-workspace active">
         <section class="panel run-panel">
           <div class="panel-title">
@@ -156,21 +172,6 @@
           </div>
         </section>
 
-        <section class="panel report-panel">
-          <div class="panel-title">
-            <span>05</span>
-            <h2>报告信息</h2>
-            <button class="help-button" type="button" aria-label="报告信息说明" data-help="这些字段会写入 PDF/HTML 报告。涉及客户或项目敏感信息时，导出或使用 AI 分析前请确认数据可保存或外发。">?</button>
-          </div>
-          <div class="report-form">
-            <label>客户<input id="customer" value="M5Stack" /></label>
-            <label>被测设备<input id="eut" value="产品A" /></label>
-            <label>型号<input id="model" value="Model-X" /></label>
-            <label>工程师<input id="engineer" value="张工程师" /></label>
-            <label class="full">备注<input id="remark" value="首次测试" /></label>
-          </div>
-        </section>
-
         <section class="panel ai-panel">
           <div class="panel-title">
             <span>AI</span>
@@ -240,7 +241,7 @@
           <div class="panel-title">
             <span>S11</span>
             <h2>S11 曲线与中心谷值</h2>
-            <button class="help-button" type="button" aria-label="S11 曲线说明" data-help="曲线单位为 dB，越低表示反射越小。普通预设取当前频段最深谷作为中心频率；全扫宽会保留全部局部谷并按频率分页。">?</button>
+            <button class="help-button" type="button" aria-label="S11 曲线说明" data-help="曲线单位为 dB，越低表示反射越小。页面会同步显示回波损耗 RL=-S11 和驻波比 VSWR；普通预设取当前频段最深谷作为中心频率，全扫宽会保留全部局部谷并按频率分页。">?</button>
           </div>
           <canvas id="naS11Canvas" width="1200" height="520"></canvas>
           <div class="legend">
@@ -259,6 +260,30 @@
           </div>
           <div class="primary-valley" id="naPrimaryText">暂无中心谷值。</div>
           <div class="bandwidth-grid" id="bandwidthGrid"></div>
+        </section>
+
+        <section class="panel na-point-panel">
+          <div class="panel-title">
+            <span>PTS</span>
+            <h2>中心与带宽端点详情</h2>
+            <button class="help-button" type="button" aria-label="中心与端点说明" data-help="这里列出中心谷值、绝对 -3dB/-10dB 端点和相对 +3dB/+10dB 端点，便于查看中心频率周围每个关键频点的 S11、回波损耗和驻波比。">?</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>标记</th>
+                  <th>频率 MHz</th>
+                  <th>S11 dB</th>
+                  <th>回波损耗 dB</th>
+                  <th>VSWR</th>
+                </tr>
+              </thead>
+              <tbody id="pointRows">
+                <tr><td colspan="5">暂无中心或端点数据</td></tr>
+              </tbody>
+            </table>
+          </div>
         </section>
 
         <section class="panel na-smith-panel">
@@ -283,13 +308,15 @@
                   <th>#</th>
                   <th>频率 MHz</th>
                   <th>S11 dB</th>
+                  <th>回波损耗 dB</th>
+                  <th>VSWR</th>
                   <th>显著性 dB</th>
                   <th>绝对 -10dB 带宽</th>
                   <th>相对 +3dB 带宽</th>
                 </tr>
               </thead>
               <tbody id="valleyRows">
-                <tr><td colspan="6">暂无 NA 测量数据</td></tr>
+                <tr><td colspan="8">暂无 NA 测量数据</td></tr>
               </tbody>
             </table>
           </div>

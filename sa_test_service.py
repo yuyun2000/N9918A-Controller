@@ -775,15 +775,15 @@ class SATestService:
         if config.get("full_sweep"):
             return [
                 (433.0, 18, 8.5),
-                (898.0, 16, 10.0),
+                (868.0, 16, 10.0),
                 (915.0, 19, 8.0),
                 (2450.0, 22, 30.0),
                 (5200.0, 15, 55.0),
             ]
         if "433" in label:
             return [(433.0, 23, 10.0), (470.0, 7, 5.5)]
-        if "898" in label:
-            return [(898.0, 21, 9.5), (930.0, 8, 6.0)]
+        if "868" in label:
+            return [(868.0, 21, 9.5), (930.0, 8, 6.0)]
         if "915" in label:
             return [(915.0, 24, 8.0), (880.0, 7, 6.0)]
         if "2450" in label:
@@ -829,9 +829,11 @@ class SATestService:
                 "smith": result.get("smith"),
                 "primary_valley": result.get("primary_valley"),
                 "bandwidths": result.get("bandwidths") or {},
+                "points_of_interest": result.get("points_of_interest") or [],
                 "valleys": result.get("valleys") or [],
                 "config": result.get("config") or self.na_config,
                 "is_full_sweep": bool(result.get("is_full_sweep") or (self.na_config or {}).get("full_sweep")),
+                "measurement_time": result.get("measurement_time"),
             }
 
     def save_na_data(self):
@@ -849,7 +851,7 @@ class SATestService:
             project_info = self.user_info.copy()
         if not result:
             raise ServiceError("没有可导出的 NA 测量结果。")
-        report_path = export_na_report(result, user_info=project_info)
+        report_path = export_na_report(result, user_info=project_info, output_dir=ROOT / "reports")
         with self.lock:
             self.na_last_report_path = report_path
         return report_path

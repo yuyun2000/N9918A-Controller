@@ -56,6 +56,7 @@
 - 任何会改变仪器状态的命令必须先说明风险；涉及开关切换、长测、外部发送客户数据时，等待用户确认。
 - `Switch.py` 的开关位置语义是 Mini-Circuits DLL 的 0/1 映射到位置 1/2；修改时必须确认 A/B/C/D 的物理链路含义。
 - NA 校准固定顺序按 FieldFox QuickCal 文档执行，且 NA 使用 switchbox 的 B/C 通道：OPEN=`B2C1` + `CORR:COLL:INT 1;*OPC?` 必须先于 LOAD=`B1C1` + `CORR:COLL:LOAD 1;*OPC?`，最后 ANTENNA=`B2C2`；否则仪器可能返回 `Must acquire open port first`。SA 仍使用原有 A/D 自动切换逻辑。
+- NA 默认天线预设包含 433/868/915/2450/5GHz/全扫宽；结果必须保留负值 S11 dB，同时同步计算回波损耗 `RL=-S11_dB` 和由 `|Γ|=10^(S11/20)` 得到的 VSWR，前端和 PDF 报告都要展示。
 - SCPI 调试先做只读查询或短流程复现，例如 `*IDN?`、资源枚举、当前配置查询；避免直接上来改模式或触发扫描。
 - 对超时、断连、VISA IO 错误、DLL 加载失败、RF Switch 未连接等情况，要保留清晰错误提示和降级路径。
 

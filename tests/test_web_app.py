@@ -100,6 +100,9 @@ class WebAppSmokeTest(unittest.TestCase):
             self.assertIn("设备 IP".encode("utf-8"), page.data)
             self.assertIn("NA 天线测量".encode("utf-8"), page.data)
             self.assertIn("3dB / 10dB 双口径带宽".encode("utf-8"), page.data)
+            self.assertIn("回波损耗".encode("utf-8"), page.data)
+            self.assertIn("VSWR".encode("utf-8"), page.data)
+            self.assertIn("中心与带宽端点详情".encode("utf-8"), page.data)
         finally:
             page.close()
 
@@ -229,7 +232,11 @@ class WebAppSmokeTest(unittest.TestCase):
         presets = self.client.get("/api/na/presets").get_json()
         self.assertTrue(presets["ok"], presets)
         self.assertIn("ANT_433", presets["data"])
+        self.assertIn("ANT_868", presets["data"])
+        self.assertNotIn("ANT_898", presets["data"])
         self.assertIn("ANT_FULL", presets["data"])
+        self.assertEqual(presets["data"]["ANT_868"]["start_freq"], 768e6)
+        self.assertEqual(presets["data"]["ANT_868"]["stop_freq"], 968e6)
 
         configured = self.client.post("/api/na/configure", json={"preset_key": "ANT_433"}).get_json()
         self.assertTrue(configured["ok"], configured)
@@ -251,9 +258,13 @@ class WebAppSmokeTest(unittest.TestCase):
         self.assertTrue(data["smith"]["real"])
         self.assertTrue(data["primary_valley"])
         self.assertIn("absolute_3db", data["bandwidths"])
+        self.assertIn("return_loss_db", data["primary_valley"])
+        self.assertIn("vswr", data["primary_valley"])
+        self.assertTrue(data["points_of_interest"])
         self.assertGreater(len(data["valleys"]), 0)
 
     def test_na_save_and_report_export_in_demo(self):
+        output = None
         with tempfile.TemporaryDirectory() as tmp:
             old_cwd = os.getcwd()
             os.chdir(tmp)
@@ -275,9 +286,20 @@ class WebAppSmokeTest(unittest.TestCase):
                 self.assertTrue(report["ok"], report)
                 output = Path(report["data"]["file"])
                 self.assertTrue(output.exists())
-                self.assertTrue(output.read_text(encoding="utf-8").lstrip().startswith("<!doctype html>"))
+                self.assertTrue(output.read_bytes().startswith(b"%PDF"))
+                download = self.client.get(report["data"]["download_url"])
+                try:
+                    self.assertEqual(download.status_code, 200)
+                    self.assertTrue(download.data.startswith(b"%PDF"))
+                finally:
+                    download.close()
             finally:
                 os.chdir(old_cwd)
+                if output and output.exists():
+                    output.unlink()
+                    reports_dir = output.parent
+                    if reports_dir.exists() and not any(reports_dir.iterdir()):
+                        reports_dir.rmdir()
 
 
 class BackendRegressionTest(unittest.TestCase):
@@ -340,9 +362,13 @@ class NAAlgorithmTest(unittest.TestCase):
 
         self.assertAlmostEqual(result["primary_valley"]["frequency_mhz"], 2.0)
         self.assertAlmostEqual(result["primary_valley"]["s11_db"], -20.0)
+        self.assertAlmostEqual(result["primary_valley"]["return_loss_db"], 20.0)
+        self.assertAlmostEqual(result["primary_valley"]["vswr"], 1.2222, places=3)
         self.assertAlmostEqual(result["bandwidths"]["absolute_10db"]["left_hz"], 1.333333e6, delta=2)
         self.assertAlmostEqual(result["bandwidths"]["absolute_10db"]["right_hz"], 2.666667e6, delta=2)
+        self.assertAlmostEqual(result["bandwidths"]["absolute_10db"]["left_vswr"], 1.925, places=3)
         self.assertAlmostEqual(result["bandwidths"]["relative_3db"]["width_hz"], 0.4e6, delta=2)
+        self.assertTrue(result["points_of_interest"])
         self.assertTrue(result["smith"]["markers"])
 
     def test_full_sweep_lists_multiple_valleys_without_smith(self):
