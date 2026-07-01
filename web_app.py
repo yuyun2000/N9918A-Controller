@@ -1,4 +1,5 @@
 import importlib.util
+import importlib
 import json
 import os
 import threading
@@ -25,8 +26,16 @@ def ok(data=None, **extra):
     return jsonify(payload)
 
 
-def module_available(import_name):
-    return importlib.util.find_spec(import_name) is not None
+def module_status(import_name):
+    try:
+        spec = importlib.util.find_spec(import_name)
+    except (ImportError, AttributeError, ValueError) as exc:
+        try:
+            importlib.import_module(import_name)
+        except Exception as import_exc:
+            return False, f"{import_name}: {import_exc}"
+        return True, f"{import_name}: import ok ({exc})"
+    return spec is not None, import_name if spec is not None else f"{import_name}: not installed"
 
 
 def build_diagnostics():
@@ -39,14 +48,16 @@ def build_diagnostics():
         ("ReportLab", "reportlab"),
         ("pythonnet clr", "clr"),
     ]
-    packages = [
-        {
-            "name": label,
-            "ok": module_available(module),
-            "detail": module,
-        }
-        for label, module in package_checks
-    ]
+    packages = []
+    for label, module in package_checks:
+        available, detail = module_status(module)
+        packages.append(
+            {
+                "name": label,
+                "ok": available,
+                "detail": detail,
+            }
+        )
 
     required_files = [
         ("Mini-Circuits DLL", ROOT / "mcl_RF_Switch_Controller64.dll"),
@@ -298,7 +309,7 @@ def api_ai_analyze():
 @app.post("/api/report/export")
 def api_report_export():
     data = request.get_json(silent=True) or {}
-    report_path = service.export_pdf(data.get("user_info"), auto_analyze=data.get("auto_analyze", True))
+    report_path = service.export_pdf(data.get("user_info"), auto_analyze=data.get("auto_analyze", False))
     return ok(
         {
             "file": str(report_path),

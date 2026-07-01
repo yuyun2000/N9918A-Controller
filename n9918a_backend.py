@@ -198,6 +198,41 @@ def collapse_contiguous_indices(indices, amplitudes):
     groups.append(current)
     return [max(group, key=lambda idx: amplitudes[idx]) for group in groups]
 
+
+def collapse_exceeding_regions(indices, amplitudes, frequencies):
+    """Collapse adjacent exceeding bins without merging large frequency gaps."""
+    if not indices:
+        return []
+    sorted_indices = sorted(set(int(index) for index in indices))
+    if len(sorted_indices) == 1:
+        return sorted_indices
+
+    steps = []
+    for index in sorted_indices:
+        if index > 0:
+            step = abs(float(frequencies[index]) - float(frequencies[index - 1]))
+            if step > 0:
+                steps.append(step)
+        if index < len(frequencies) - 1:
+            step = abs(float(frequencies[index + 1]) - float(frequencies[index]))
+            if step > 0:
+                steps.append(step)
+    nominal_step = min(steps) if steps else 0
+    max_contiguous_gap = nominal_step * 3.0 if nominal_step > 0 else None
+
+    groups = []
+    current = [sorted_indices[0]]
+    for index in sorted_indices[1:]:
+        gap_hz = abs(float(frequencies[index]) - float(frequencies[current[-1]]))
+        contiguous = index == current[-1] + 1
+        if contiguous and (max_contiguous_gap is None or gap_hz <= max_contiguous_gap):
+            current.append(index)
+        else:
+            groups.append(current)
+            current = [index]
+    groups.append(current)
+    return [max(group, key=lambda idx: amplitudes[idx]) for group in groups]
+
 class N9918AController:
     """
     N9918A FieldFox SA Controller for EMC Testing
@@ -1103,7 +1138,7 @@ def post_process_peak_search(
         
         if amp_dbuv > fcc_limit or amp_dbuv > ce_limit:
             threshold_indices.append(i)
-    threshold_peaks = collapse_contiguous_indices(threshold_indices, amplitudes)
+    threshold_peaks = collapse_exceeding_regions(threshold_indices, amplitudes, frequencies)
     
     # 合并峰值并去重
     all_peaks = list(set(list(primary_peaks) + list(secondary_peaks) + threshold_peaks))

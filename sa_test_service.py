@@ -901,6 +901,7 @@ class SATestService:
         return save_na_measurement_data(result)
 
     def export_na_report(self, user_info=None):
+        start_time = time.perf_counter()
         with self.lock:
             if user_info:
                 self.update_user_info(user_info)
@@ -908,9 +909,17 @@ class SATestService:
             project_info = self.user_info.copy()
         if not result:
             raise ServiceError("没有可导出的 NA 测量结果。")
-        report_path = export_na_report(result, user_info=project_info, output_dir=ROOT / "reports")
+        try:
+            report_path = export_na_report(result, user_info=project_info, output_dir=ROOT / "reports")
+        except ImportError as exc:
+            raise ServiceError("缺少 NA 报告依赖，请先在 visa 环境运行 `pip install -r requirements.txt`。") from exc
+        except OSError as exc:
+            raise ServiceError(f"NA 报告文件写入失败，请检查 reports 目录权限或文件是否被占用：{exc}") from exc
+        except Exception as exc:
+            raise ServiceError(f"NA 报告生成失败：{exc}") from exc
         with self.lock:
             self.na_last_report_path = report_path
+        print(f"[REPORT] NA PDF export completed in {time.perf_counter() - start_time:.2f}s: {report_path}")
         return report_path
 
     def stop_measurement(self):
@@ -1042,6 +1051,7 @@ class SATestService:
         return saved_files
 
     def export_pdf(self, user_info=None, auto_analyze=True):
+        total_start = time.perf_counter()
         with self.lock:
             if user_info:
                 self.update_user_info(user_info)
@@ -1049,9 +1059,17 @@ class SATestService:
                 raise ServiceError("PDF 报告仅支持 15s/5min 等 EMI 测量结果。")
 
         if auto_analyze and not self.last_ai_result:
-            self.analyze()
+            ai_start = time.perf_counter()
+            try:
+                self.analyze()
+            except Exception as exc:
+                print(f"[REPORT] AI analysis skipped after failure: {exc}")
+            else:
+                print(f"[REPORT] AI analysis completed in {time.perf_counter() - ai_start:.2f}s")
 
+        graph_start = time.perf_counter()
         graph_path = self._render_graph_png()
+        print(f"[REPORT] SA graph rendered in {time.perf_counter() - graph_start:.2f}s")
         reports_dir = ROOT / "reports"
         reports_dir.mkdir(exist_ok=True)
 
@@ -1066,31 +1084,49 @@ class SATestService:
             filename = f"{project_info.get('eut', 'N9918A')}-{mode}.pdf"
             filename = self._safe_filename(filename)
             output_path = reports_dir / filename
-            summary_text = self.last_ai_result
+            summary_text = self.last_ai_result or "未执行 AI 分析。可先点击页面中的“AI 异常分析”，完成后再次导出 PDF，报告会包含 AI 分析结果。"
             peak_table = self.format_peak_table()
 
+        temp_report = tempfile.NamedTemporaryFile(prefix="n9918a_report_", suffix=".pdf", dir=reports_dir, delete=False)
+        temp_report_path = Path(temp_report.name)
+        temp_report.close()
         try:
             try:
                 from utils.create_pdf import generate_test_report
             except ImportError as exc:
                 raise ServiceError("缺少 PDF 依赖，请先运行 `pip install -r requirements.txt`。") from exc
 
+            pdf_start = time.perf_counter()
             generate_test_report(
-                filename=str(output_path),
+                filename=str(temp_report_path),
                 logo_path="./assets/m5logo2022.png",
                 project_info=project_info,
                 test_graph_path=str(graph_path),
                 spectrum_data=peak_table,
                 summary_text=summary_text,
             )
+            os.replace(temp_report_path, output_path)
+            print(f"[REPORT] SA PDF rendered in {time.perf_counter() - pdf_start:.2f}s")
+        except ServiceError:
+            raise
+        except OSError as exc:
+            raise ServiceError(f"PDF 文件写入失败，请检查 reports 目录权限或文件是否被占用：{exc}") from exc
+        except Exception as exc:
+            raise ServiceError(f"PDF 报告生成失败：{exc}") from exc
         finally:
             try:
                 os.remove(graph_path)
             except OSError:
                 pass
+            try:
+                if temp_report_path.exists():
+                    temp_report_path.unlink()
+            except OSError:
+                pass
 
         with self.lock:
             self.last_report_path = output_path
+        print(f"[REPORT] SA PDF export completed in {time.perf_counter() - total_start:.2f}s: {output_path}")
         return output_path
 
     def _render_graph_png(self):

@@ -29,6 +29,7 @@ from n9918a_na_backend import (
     build_na_result,
     frequency_axis,
 )
+import web_app
 from web_app import app
 
 
@@ -199,6 +200,22 @@ class WebAppSmokeTest(unittest.TestCase):
         self.assertIn("environment", data)
         self.assertTrue(any(item["name"] == "报告 logo" for item in data["files"]))
 
+    def test_diagnostics_api_handles_clr_without_spec(self):
+        original_find_spec = web_app.importlib.util.find_spec
+
+        def fake_find_spec(name):
+            if name == "clr":
+                raise ValueError("clr.__spec__ is None")
+            return original_find_spec(name)
+
+        with patch("web_app.importlib.util.find_spec", fake_find_spec), patch("web_app.importlib.import_module", return_value=object()):
+            diagnostics = self.client.get("/api/diagnostics").get_json()
+
+        self.assertTrue(diagnostics["ok"], diagnostics)
+        clr_item = next(item for item in diagnostics["data"]["packages"] if item["name"] == "pythonnet clr")
+        self.assertTrue(clr_item["ok"])
+        self.assertIn("import ok", clr_item["detail"])
+
     def test_demo_result_and_measurement_flow(self):
         demo = self.client.post("/api/demo/load", json={"duration_seconds": 15}).get_json()
         self.assertTrue(demo["ok"], demo)
@@ -299,6 +316,72 @@ class WebAppSmokeTest(unittest.TestCase):
                 reports_dir.rmdir()
         except OSError:
             pass
+
+    def test_demo_report_export_does_not_trigger_ai_by_default(self):
+        demo = self.client.post("/api/demo/load", json={"duration_seconds": 15}).get_json()
+        self.assertTrue(demo["ok"], demo)
+        web_app.service.last_ai_result = ""
+
+        fake_module = types.ModuleType("utils.create_pdf")
+        captured = {}
+
+        def fake_generate_test_report(filename, **kwargs):
+            captured["summary_text"] = kwargs.get("summary_text")
+            Path(filename).parent.mkdir(parents=True, exist_ok=True)
+            Path(filename).write_bytes(b"%PDF-1.4\n% fake smoke report\n")
+
+        fake_module.generate_test_report = fake_generate_test_report
+        previous = sys.modules.get("utils.create_pdf")
+        sys.modules["utils.create_pdf"] = fake_module
+        output = None
+        try:
+            with patch("sa_test_service.SATestService.analyze", side_effect=AssertionError("AI should not run")):
+                report = self.client.post(
+                    "/api/report/export",
+                    json={
+                        "user_info": {"eut": "NoAiDevice"},
+                    },
+                ).get_json()
+        finally:
+            if previous is None:
+                sys.modules.pop("utils.create_pdf", None)
+            else:
+                sys.modules["utils.create_pdf"] = previous
+
+        self.assertTrue(report["ok"], report)
+        output = Path(report["data"]["file"])
+        self.assertTrue(output.exists())
+        self.assertIn("未执行 AI 分析", captured["summary_text"])
+        try:
+            output.unlink()
+        except OSError:
+            pass
+
+    def test_demo_report_export_real_reportlab(self):
+        try:
+            import reportlab  # noqa: F401
+        except ImportError:
+            self.skipTest("ReportLab is not installed in this Python environment")
+
+        output = None
+        demo = self.client.post("/api/demo/load", json={"duration_seconds": 15}).get_json()
+        self.assertTrue(demo["ok"], demo)
+
+        report = self.client.post(
+            "/api/report/export",
+            json={
+                "auto_analyze": False,
+                "user_info": {"eut": "RealPdfDevice"},
+            },
+        ).get_json()
+        self.assertTrue(report["ok"], report)
+        output = Path(report["data"]["file"])
+        try:
+            self.assertTrue(output.exists())
+            self.assertTrue(output.read_bytes().startswith(b"%PDF"))
+        finally:
+            if output and output.exists():
+                output.unlink()
 
     def test_mode_and_na_demo_flow(self):
         demo = self.client.post("/api/demo/load", json={"duration_seconds": 15}).get_json()

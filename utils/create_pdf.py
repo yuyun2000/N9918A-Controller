@@ -132,8 +132,8 @@ def _draw_first_page(c, width, height, logo_path, project_info, test_graph_path,
     if os.path.exists(logo_path):
         try:
             from PIL import Image as PILImage
-            pil_img = PILImage.open(logo_path)
-            aspect_ratio = pil_img.width / pil_img.height
+            with PILImage.open(logo_path) as pil_img:
+                aspect_ratio = pil_img.width / pil_img.height
             actual_height = logo_width / aspect_ratio
             c.drawImage(logo_path, 45, height - 70, width=logo_width, height=actual_height, mask='auto')
             logo_height = actual_height
@@ -249,8 +249,8 @@ def _draw_logo_only_header(c, width, height, logo_path):
     if os.path.exists(logo_path):
         try:
             from PIL import Image as PILImage
-            pil_img = PILImage.open(logo_path)
-            aspect_ratio = pil_img.width / pil_img.height
+            with PILImage.open(logo_path) as pil_img:
+                aspect_ratio = pil_img.width / pil_img.height
             actual_height = logo_width / aspect_ratio
             c.drawImage(logo_path, 45, height - 70, width=logo_width, height=actual_height, mask='auto')
         except Exception as e:

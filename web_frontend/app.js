@@ -953,7 +953,8 @@ function bindEvents() {
   );
   elements.pdfBtn.addEventListener("click", () =>
     runAction("导出 PDF 报告", async () => {
-      const data = await post("/api/report/export", { user_info: userInfoPayload(), auto_analyze: true });
+      elements.downloadSlot.textContent = "正在生成 PDF 报告...";
+      const data = await post("/api/report/export", { user_info: userInfoPayload(), auto_analyze: false });
       elements.downloadSlot.innerHTML = `<a href="${data.download_url}">下载报告：${data.file}</a>`;
     }),
   );
